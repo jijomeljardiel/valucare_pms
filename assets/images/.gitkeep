@@ -1,0 +1,15 @@
+# Logo Directory
+
+Place your custom logo file here as `logo.png`, `logo.jpg`, or `logo.svg`.
+
+The logo will be automatically displayed in:
+- Header (40x40px)
+- Sidebar (56x56px)
+
+Recommended specifications:
+- Format: PNG, JPG, or SVG
+- Size: Square aspect ratio (1:1)
+- Resolution: At least 112x112px for crisp display
+- Background: Transparent (for PNG/SVG) or matching your brand colors
+
+If no logo is found, fallback icons will be displayed instead.

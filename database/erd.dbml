@@ -1,0 +1,245 @@
+Project valucare_pms {
+  database_type: "MySQL"
+}
+
+Table organizations {
+  id int [pk]
+  name varchar(160)
+  slug varchar(160)
+  created_at timestamp
+}
+
+Table users {
+  id int [pk]
+  org_id int [ref: > organizations.id]
+  username varchar(50)
+  email varchar(255)
+  role varchar(50)
+  status varchar(20)
+  presence varchar(20)
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table teams {
+  id int [pk]
+  org_id int [ref: > organizations.id]
+  name varchar(120)
+  description text
+  created_by int [ref: > users.id]
+  created_at timestamp
+}
+
+Table team_members {
+  team_id int [pk, ref: > teams.id]
+  user_id int [pk, ref: > users.id]
+  role varchar(20)
+  joined_at timestamp
+}
+
+Table project_statuses {
+  id int [pk]
+  key varchar(60)
+  name varchar(160)
+  order_index int
+  active boolean
+}
+
+Table projects {
+  id int [pk]
+  team_id int [ref: > teams.id]
+  name varchar(160)
+  description text
+  project_status_id int [ref: > project_statuses.id]
+  priority varchar(20)
+  progress int
+  start_date date
+  due_date date
+  project_manager_id int [ref: > users.id]
+  created_by int [ref: > users.id]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table task_statuses {
+  id int [pk]
+  key varchar(60)
+  name varchar(160)
+  order_index int
+  active boolean
+}
+
+Table tasks {
+  id int [pk]
+  project_id int [ref: > projects.id]
+  title varchar(200)
+  description text
+  task_status_id int [ref: > task_statuses.id]
+  priority varchar(20)
+  assignee_id int [ref: > users.id]
+  start_date date
+  due_date date
+  estimate_hours decimal
+  order_index int
+  is_blocked boolean
+  blocked_reason text
+  blocked_at timestamp
+  unblocked_at timestamp
+  parent_task_id int [ref: > tasks.id]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table task_assignees {
+  task_id int [pk, ref: > tasks.id]
+  user_id int [pk, ref: > users.id]
+  assigned_at timestamp
+}
+
+Table tags {
+  id int [pk]
+  key varchar(80)
+  name varchar(160)
+}
+
+Table task_tags {
+  task_id int [pk, ref: > tasks.id]
+  tag_id int [pk, ref: > tags.id]
+}
+
+Table task_dependencies {
+  id int [pk]
+  task_id int [ref: > tasks.id]
+  depends_on_task_id int [ref: > tasks.id]
+  type varchar(20)
+}
+
+Table task_comments {
+  id int [pk]
+  task_id int [ref: > tasks.id]
+  user_id int [ref: > users.id]
+  body text
+  created_at timestamp
+}
+
+Table task_time_logs {
+  id int [pk]
+  task_id int [ref: > tasks.id]
+  user_id int [ref: > users.id]
+  hours decimal
+  notes text
+  logged_at timestamp
+}
+
+Table attachments {
+  id int [pk]
+  project_id int [ref: > projects.id]
+  task_id int [ref: > tasks.id]
+  file_name varchar(255)
+  file_path varchar(500)
+  file_size int
+  mime_type varchar(120)
+  uploaded_by int [ref: > users.id]
+  uploaded_at timestamp
+}
+
+Table channels {
+  id int [pk]
+  org_id int [ref: > organizations.id]
+  team_id int [ref: > teams.id]
+  name varchar(160)
+  type varchar(20)
+  created_by int [ref: > users.id]
+  created_at timestamp
+}
+
+Table messages {
+  id int [pk]
+  channel_id int [ref: > channels.id]
+  user_id int [ref: > users.id]
+  content text
+  reply_to_id int [ref: > messages.id]
+  created_at timestamp
+}
+
+Table notifications {
+  id int [pk]
+  user_id int [ref: > users.id]
+  title varchar(200)
+  body text
+  url varchar(500)
+  is_read boolean
+  created_at timestamp
+}
+
+Table extension_requests {
+  id int [pk]
+  task_id int [ref: > tasks.id]
+  requested_by int [ref: > users.id]
+  current_due_date date
+  requested_due_date date
+  requested_extension_days int
+  reason text
+  justification text
+  status varchar(20)
+  priority varchar(20)
+  reviewed_by int [ref: > users.id]
+  reviewed_at timestamp
+  decision_notes text
+  created_at timestamp
+}
+
+Table performance_records {
+  id int [pk]
+  user_id int [ref: > users.id]
+  period varchar(20)
+  rating decimal
+  productivity decimal
+  created_at timestamp
+}
+
+Table activity_log {
+  id int [pk]
+  user_id int [ref: > users.id]
+  action varchar(150)
+  entity_type varchar(60)
+  entity_id int
+  ip_address varchar(45)
+  metadata text
+  created_at timestamp
+}
+
+Table workflow_rules {
+  id int [pk]
+  name varchar(160)
+  description text
+  trigger_event varchar(120)
+  condition_text text
+  action_text varchar(160)
+  active boolean
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table user_notification_settings {
+  user_id int [pk, ref: > users.id]
+  email boolean
+  push boolean
+  slack boolean
+  frequency varchar(20)
+  types_tasks boolean
+  types_projects boolean
+  types_system boolean
+  types_mentions boolean
+  updated_at timestamp
+}
+
+Table system_settings {
+  id int [pk]
+  backup_frequency varchar(20)
+  backup_retention_days int
+  security_2fa boolean
+  security_strong_pw boolean
+  session_timeout_minutes int
+  updated_at timestamp
+}

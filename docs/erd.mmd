@@ -1,0 +1,261 @@
+erDiagram
+  organizations ||--o{ users : has
+  organizations ||--o{ teams : has
+  teams ||--o{ team_members : has
+  users ||--o{ team_members : has
+
+  teams ||--o{ projects : has
+  project_statuses ||--o{ projects : categorizes
+  users ||--o{ projects : manages
+  users ||--o{ projects : creates
+
+  projects ||--o{ tasks : has
+  task_statuses ||--o{ tasks : categorizes
+  users ||--o{ tasks : assigned
+  tasks ||--o{ tasks : parent
+
+  tasks ||--o{ task_assignees : has
+  users ||--o{ task_assignees : assigned
+
+  tags ||--o{ task_tags : links
+  tasks ||--o{ task_tags : tagged
+
+  tasks ||--o{ task_dependencies : depends
+  tasks ||--o{ task_dependencies : required
+
+  tasks ||--o{ task_comments : has
+  users ||--o{ task_comments : writes
+
+  tasks ||--o{ task_time_logs : logs
+  users ||--o{ task_time_logs : logs
+
+  projects ||--o{ attachments : has
+  tasks ||--o{ attachments : has
+  users ||--o{ attachments : uploads
+
+  organizations ||--o{ channels : has
+  teams ||--o{ channels : has
+  users ||--o{ channels : creates
+  channels ||--o{ messages : has
+  users ||--o{ messages : sends
+  messages ||--o{ messages : replies
+
+  users ||--o{ notifications : receives
+
+  tasks ||--o{ extension_requests : has
+  users ||--o{ extension_requests : requests
+  users ||--o{ extension_requests : reviews
+
+  users ||--o{ performance_records : has
+  users ||--o{ activity_log : triggers
+
+  users ||--|| user_notification_settings : has
+  system_settings ||--|| system_settings : singleton
+
+  organizations {
+    int id PK
+    varchar name
+    varchar slug
+    timestamp created_at
+  }
+
+  users {
+    int id PK
+    int org_id FK
+    varchar username
+    varchar email
+    varchar role
+    varchar status
+    varchar presence
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  teams {
+    int id PK
+    int org_id FK
+    varchar name
+    int created_by FK
+    timestamp created_at
+  }
+
+  team_members {
+    int team_id PK, FK
+    int user_id PK, FK
+    varchar role
+    timestamp joined_at
+  }
+
+  project_statuses {
+    int id PK
+    varchar key
+    varchar name
+  }
+
+  projects {
+    int id PK
+    int team_id FK
+    int project_status_id FK
+    int project_manager_id FK
+    int created_by FK
+    varchar name
+    timestamp created_at
+  }
+
+  task_statuses {
+    int id PK
+    varchar key
+    varchar name
+  }
+
+  tasks {
+    int id PK
+    int project_id FK
+    int task_status_id FK
+    int assignee_id FK
+    int parent_task_id FK
+    varchar title
+    timestamp created_at
+  }
+
+  task_assignees {
+    int task_id PK, FK
+    int user_id PK, FK
+    timestamp assigned_at
+  }
+
+  tags {
+    int id PK
+    varchar key
+    varchar name
+  }
+
+  task_tags {
+    int task_id PK, FK
+    int tag_id PK, FK
+  }
+
+  task_dependencies {
+    int id PK
+    int task_id FK
+    int depends_on_task_id FK
+    varchar type
+  }
+
+  task_comments {
+    int id PK
+    int task_id FK
+    int user_id FK
+    text body
+    timestamp created_at
+  }
+
+  task_time_logs {
+    int id PK
+    int task_id FK
+    int user_id FK
+    decimal hours
+    timestamp logged_at
+  }
+
+  attachments {
+    int id PK
+    int project_id FK
+    int task_id FK
+    int uploaded_by FK
+    varchar file_name
+    varchar file_path
+    timestamp uploaded_at
+  }
+
+  channels {
+    int id PK
+    int org_id FK
+    int team_id FK
+    int created_by FK
+    varchar name
+    varchar type
+    timestamp created_at
+  }
+
+  messages {
+    int id PK
+    int channel_id FK
+    int user_id FK
+    int reply_to_id FK
+    text content
+    timestamp created_at
+  }
+
+  notifications {
+    int id PK
+    int user_id FK
+    varchar title
+    text body
+    varchar url
+    boolean is_read
+    timestamp created_at
+  }
+
+  extension_requests {
+    int id PK
+    int task_id FK
+    int requested_by FK
+    int reviewed_by FK
+    date current_due_date
+    date requested_due_date
+    int requested_extension_days
+    varchar status
+    varchar priority
+    timestamp created_at
+  }
+
+  performance_records {
+    int id PK
+    int user_id FK
+    varchar period
+    decimal rating
+    decimal productivity
+    timestamp created_at
+  }
+
+  activity_log {
+    int id PK
+    int user_id FK
+    varchar action
+    varchar entity_type
+    int entity_id
+    timestamp created_at
+  }
+
+  workflow_rules {
+    int id PK
+    varchar name
+    varchar trigger_event
+    boolean active
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  user_notification_settings {
+    int user_id PK, FK
+    boolean email
+    boolean push
+    boolean slack
+    varchar frequency
+    boolean types_tasks
+    boolean types_projects
+    boolean types_system
+    boolean types_mentions
+    timestamp updated_at
+  }
+
+  system_settings {
+    int id PK
+    varchar backup_frequency
+    int backup_retention_days
+    boolean security_2fa
+    boolean security_strong_pw
+    int session_timeout_minutes
+    timestamp updated_at
+  }
