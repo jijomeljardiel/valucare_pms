@@ -2,15 +2,26 @@
 require_once 'includes/auth_guard.php';
 require_once 'config/database.php';
 date_default_timezone_set('Asia/Manila');
-$role = strtolower($_SESSION['role_slug'] ?? ($_SESSION['role'] ?? ($_SESSION['login_user']['role'] ?? '')));
+
+$role = strtolower($_SESSION['role'] ?? ($_SESSION['login_user']['role'] ?? ''));
 $userId = (int)($_SESSION['user_id'] ?? ($_SESSION['login_user']['id'] ?? 0));
-if (!in_array($role, ['project_manager','admin'], true)) { http_response_code(403); echo 'Forbidden'; exit; }
+
+
+if (!in_array($role, ['manager', 'admin', 'project_manager'], true)) { 
+    http_response_code(403); 
+    echo 'Forbidden: You do not have access to Team Management.'; 
+    exit; 
+}
+
 $pdo = null;
 try { $pdo = getDBConnection(); } catch (Exception $e) { $pdo = null; }
+
 $teamLeads = [];
 $activeMembers = [];
+
 if ($pdo) {
   try {
+    // Siguraduhin na ang tables ay nag-eexist
     $pdo->exec("CREATE TABLE IF NOT EXISTS `teams` (
       `id` INT NOT NULL AUTO_INCREMENT,
       `name` VARCHAR(200) NOT NULL,
@@ -19,6 +30,7 @@ if ($pdo) {
       `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (`id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS `team_members` (
       `team_id` INT NOT NULL,
       `user_id` INT NOT NULL,
@@ -28,408 +40,370 @@ if ($pdo) {
       KEY `idx_team_members_user_id` (`user_id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
   } catch (Throwable $e) { /* ignore */ }
+
   try {
-    $qLeads = $pdo->query("SELECT id, CONCAT_WS(' ', first_name, last_name) AS name, email, role, department FROM users WHERE role IN ('project_manager','admin') ORDER BY name ASC");
+    // Kunin ang mga pwedeng maging Team Lead (Admin at Manager)
+    $qLeads = $pdo->query("SELECT id, CONCAT_WS(' ', first_name, last_name) AS name, email, role, department FROM users WHERE role IN ('manager', 'admin', 'project_manager') ORDER BY name ASC");
     $teamLeads = $qLeads ? $qLeads->fetchAll(PDO::FETCH_ASSOC) : [];
-    if (!$teamLeads || count($teamLeads) === 0) {
-      $qLeadsAll = $pdo->query("SELECT id, CONCAT_WS(' ', first_name, last_name) AS name, email, role, department FROM users ORDER BY name ASC LIMIT 200");
-      $teamLeads = $qLeadsAll ? $qLeadsAll->fetchAll(PDO::FETCH_ASSOC) : [];
-    }
   } catch (Exception $e) { $teamLeads = []; }
+
   try {
-    $qMembers = $pdo->query("SELECT id, CONCAT_WS(' ', first_name, last_name) AS name, email, role, department FROM users WHERE role IN ('systemdev','project_manager') ORDER BY name ASC");
+    // Kunin ang mga active members
+    $qMembers = $pdo->query("SELECT id, CONCAT_WS(' ', first_name, last_name) AS name, email, role, department FROM users WHERE role IN ('systemdev','manager', 'project_manager') ORDER BY name ASC");
     $activeMembers = $qMembers ? $qMembers->fetchAll(PDO::FETCH_ASSOC) : [];
-    if (!$activeMembers || count($activeMembers) === 0) {
-      $qMembersAll = $pdo->query("SELECT id, CONCAT_WS(' ', first_name, last_name) AS name, email, role, department FROM users ORDER BY name ASC LIMIT 500");
-      $activeMembers = $qMembersAll ? $qMembersAll->fetchAll(PDO::FETCH_ASSOC) : [];
-    }
   } catch (Exception $e) { $activeMembers = []; }
 }
+
+// Fallback kung walang mahanap na lead
 if ((!$teamLeads || count($teamLeads) === 0) && isset($_SESSION['login_user'])) {
   $lu = $_SESSION['login_user'];
   $teamLeads = [[
     'id' => $userId,
-    'name' => isset($lu['full_name']) ? $lu['full_name'] : (isset($lu['first_name']) || isset($lu['last_name']) ? trim(($lu['first_name'] ?? '') . ' ' . ($lu['last_name'] ?? '')) : 'User'),
+    'name' => trim(($lu['first_name'] ?? '') . ' ' . ($lu['last_name'] ?? '')),
     'email' => $lu['email'] ?? '',
-    'role' => $lu['role'] ?? 'project_manager',
+    'role' => $role,
     'department' => $lu['department'] ?? ''
   ]];
 }
+
 $message = null;
 if ($pdo && $_SERVER['REQUEST_METHOD'] === 'POST') {
   if (isset($_POST['delete_team_id'])) {
-    $delTeamId = (int)($_POST['delete_team_id'] ?? 0);
-    if ($delTeamId > 0) {
-      try {
+    $delTeamId = (int)$_POST['delete_team_id'];
+    try {
         $pdo->beginTransaction();
-        $d1 = $pdo->prepare('DELETE FROM team_members WHERE team_id = ?');
-        $d1->execute([$delTeamId]);
-        $d2 = $pdo->prepare('DELETE FROM teams WHERE id = ?');
-        $d2->execute([$delTeamId]);
+        $pdo->prepare('DELETE FROM team_members WHERE team_id = ?')->execute([$delTeamId]);
+        $pdo->prepare('DELETE FROM teams WHERE id = ?')->execute([$delTeamId]);
         $pdo->commit();
-        header('Location: team_management.php?deleted=1');
-        exit;
-      } catch (Exception $e) {
-        if ($pdo && $pdo->inTransaction()) { $pdo->rollBack(); }
-        $message = 'Failed to delete team.';
-      }
-    }
+        header('Location: team_management.php?deleted=1'); exit;
+    } catch (Exception $e) { if($pdo->inTransaction()) $pdo->rollBack(); }
+
   } elseif (isset($_POST['update_team_id'])) {
-    $updateTeamId = (int)($_POST['update_team_id'] ?? 0);
+    $updateTeamId = (int)$_POST['update_team_id'];
     $name = trim($_POST['name'] ?? '');
     $description = trim($_POST['description'] ?? '');
-    $color = trim($_POST['color'] ?? '');
     $projectManagerId = (int)($_POST['project_manager_id'] ?? $userId);
-    $memberIds = isset($_POST['member_ids']) && is_array($_POST['member_ids']) ? array_filter(array_map('intval', $_POST['member_ids'])) : [];
-    if ($updateTeamId > 0 && $name !== '') {
+    $memberIds = isset($_POST['member_ids']) ? array_map('intval', $_POST['member_ids']) : [];
+
+    if ($name !== '') {
       try {
         $pdo->beginTransaction();
-        $u = $pdo->prepare('UPDATE teams SET name = ?, description = ? WHERE id = ?');
-        $u->execute([$name, $description, $updateTeamId]);
-        $clr = $color;
+        $pdo->prepare('UPDATE teams SET name = ?, description = ? WHERE id = ?')->execute([$name, $description, $updateTeamId]);
         $pdo->prepare('DELETE FROM team_members WHERE team_id = ?')->execute([$updateTeamId]);
-        $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)')->execute([$updateTeamId, $projectManagerId, 'lead']);
-        if (!empty($memberIds)) {
-          $add = $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)');
-          foreach ($memberIds as $mid) {
-            if ($mid > 0 && $mid !== $projectManagerId) { $add->execute([$updateTeamId, $mid, 'member']); }
+        $pdo->prepare('INSERT INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)')->execute([$updateTeamId, $projectManagerId, 'lead']);
+        foreach ($memberIds as $mid) {
+          if ($mid !== $projectManagerId) {
+            $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)')->execute([$updateTeamId, $mid, 'member']);
           }
         }
         $pdo->commit();
-        header('Location: team_management.php?updated=1');
-        exit;
-      } catch (Exception $e) {
-        if ($pdo && $pdo->inTransaction()) { $pdo->rollBack(); }
-        $message = 'Failed to update team.';
-      }
-    } else {
-      $message = 'Name is required.';
+        header('Location: team_management.php?updated=1'); exit;
+      } catch (Exception $e) { if($pdo->inTransaction()) $pdo->rollBack(); }
     }
-  } else {
-  $name = trim($_POST['name'] ?? '');
-  $description = trim($_POST['description'] ?? '');
-  $color = trim($_POST['color'] ?? '');
-  $projectManagerId = (int)($_POST['project_manager_id'] ?? $userId);
-  $memberIds = isset($_POST['member_ids']) && is_array($_POST['member_ids']) ? array_filter(array_map('intval', $_POST['member_ids'])) : [];
-  $members_raw = trim($_POST['members'] ?? '');
-  if ($name !== '') {
-    try {
-      $pdo->beginTransaction();
-      $st = $pdo->prepare('INSERT INTO teams (name, description, created_by) VALUES (?, ?, ?)');
-      $st->execute([$name, $description, $userId]);
-      $teamId = (int)$pdo->lastInsertId();
-      $st2 = $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)');
-      $st2->execute([$teamId, $projectManagerId, 'lead']);
-      if (!empty($memberIds)) {
-        $add = $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)');
-        foreach ($memberIds as $mid) {
-          if ($mid > 0 && $mid !== $projectManagerId) { $add->execute([$teamId, $mid, 'member']); }
-        }
-      } elseif ($members_raw !== '') {
-        $emails = preg_split('/[\n,;]+/', $members_raw);
-        $lookup = $pdo->prepare('SELECT id FROM users WHERE email = ?');
-        $add = $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)');
-        foreach ($emails as $em) {
-          $email = trim($em);
-          if ($email === '') { continue; }
-          if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { continue; }
-          $lookup->execute([$email]);
-          $uid = (int)($lookup->fetch()['id'] ?? 0);
-          if ($uid > 0 && $uid !== $projectManagerId) { $add->execute([$teamId, $uid, 'member']); }
-        }
-      }
-      $pdo->commit();
-      if (!isset($_SESSION['recent_teams']) || !is_array($_SESSION['recent_teams'])) { $_SESSION['recent_teams'] = []; }
-      $_SESSION['recent_teams'][] = ['id' => $teamId, 'name' => $name, 'members' => count($memberIds) + 1, 'color' => $color ?: '#3b82f6'];
-      if (count($_SESSION['recent_teams']) > 10) { $_SESSION['recent_teams'] = array_slice($_SESSION['recent_teams'], -10); }
-      header('Location: team_management.php?created=1');
-      exit;
-    } catch (Exception $e) {
-      if ($pdo && $pdo->inTransaction()) { $pdo->rollBack(); }
-      $message = 'Failed to create team.';
+  } elseif (isset($_POST['name'])) {
+    // CREATE TEAM
+    $name = trim($_POST['name'] ?? '');
+    $description = trim($_POST['description'] ?? '');
+    $projectManagerId = (int)($_POST['project_manager_id'] ?? $userId);
+    $memberIds = isset($_POST['member_ids']) ? array_map('intval', $_POST['member_ids']) : [];
+
+    if ($name !== '') {
+        try {
+            $pdo->beginTransaction();
+            $st = $pdo->prepare('INSERT INTO teams (name, description, created_by) VALUES (?, ?, ?)');
+            $st->execute([$name, $description, $userId]);
+            $teamId = $pdo->lastInsertId();
+            
+            $pdo->prepare('INSERT INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)')->execute([$teamId, $projectManagerId, 'lead']);
+            foreach ($memberIds as $mid) {
+                if ($mid !== $projectManagerId) {
+                    $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)')->execute([$teamId, $mid, 'member']);
+                }
+            }
+            $pdo->commit();
+            header('Location: team_management.php?created=1'); exit;
+        } catch (Exception $e) { if($pdo->inTransaction()) $pdo->rollBack(); }
     }
-  } else {
-    $message = 'Name is required.';
-  }
   }
 }
-function initials_from_name($name){$parts=preg_split('/\s+/', (string)$name);$a=strtoupper(substr($parts[0]??'',0,1).substr($parts[1]??'',0,1));return $a?:'U';}
+
+function initials_from_name($name){
+    $parts=explode(' ', (string)$name);
+    $i = strtoupper(substr($parts[0]??'U',0,1));
+    if(isset($parts[1])) $i .= strtoupper(substr($parts[1],0,1));
+    return $i;
+}
+
 $teamsData = [];
 if ($pdo) {
-  try {
-    $qTeams = $pdo->query('SELECT id, name, description, created_at FROM teams ORDER BY id DESC');
-    $leadStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email, u.role FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role = 'lead' LIMIT 1");
-    $memberStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email, u.role FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role <> 'lead' ORDER BY u.last_name, u.first_name");
-    foreach ($qTeams as $t) {
-      $leadStmt->execute([$t['id']]);
-      $lead = $leadStmt->fetch(PDO::FETCH_ASSOC);
-      $memberStmt->execute([$t['id']]);
-      $membersRows = $memberStmt->fetchAll(PDO::FETCH_ASSOC);
-      $membersOut = [];
-      if ($lead) {
-        $membersOut[] = [
-          'id' => (string)$lead['id'],
-          'name' => (string)$lead['name'],
-          'email' => (string)($lead['email'] ?? ''),
-          'role' => (string)($lead['role'] ?? 'project_manager'),
-          'avatar' => initials_from_name($lead['name']),
-          'status' => 'active',
+    $qTeams = $pdo->query('SELECT * FROM teams ORDER BY id DESC');
+    while ($t = $qTeams->fetch()) {
+        $leadStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role = 'lead'");
+        $leadStmt->execute([$t['id']]);
+        $lead = $leadStmt->fetch();
+
+        $memStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email, u.role FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role != 'lead'");
+        $memStmt->execute([$t['id']]);
+        $mems = $memStmt->fetchAll();
+
+        $membersOut = [];
+        if($lead) $membersOut[] = ['id'=>$lead['id'], 'name'=>$lead['name'], 'email'=>$lead['email'], 'role'=>'lead', 'avatar'=>initials_from_name($lead['name']), 'status'=>'active'];
+        foreach($mems as $m) $membersOut[] = ['id'=>$m['id'], 'name'=>$m['name'], 'email'=>$m['email'], 'role'=>$m['role'], 'avatar'=>initials_from_name($m['name']), 'status'=>'active'];
+
+        $teamsData[] = [
+            'id' => (string)$t['id'],
+            'name' => $t['name'],
+            'description' => $t['description'],
+            'teamLead' => $lead ? $lead['name'] : 'No Lead',
+            'members' => $membersOut,
+            'projects' => [],
+            'createdDate' => date('Y-m-d', strtotime($t['created_at'])),
+            'status' => 'active',
+            'color' => '#3b82f6'
         ];
-      }
-      foreach ($membersRows as $m) {
-        $membersOut[] = [
-          'id' => (string)$m['id'],
-          'name' => (string)$m['name'],
-          'email' => (string)($m['email'] ?? ''),
-          'role' => (string)($m['role'] ?? ''),
-          'avatar' => initials_from_name($m['name']),
-          'status' => 'active',
-        ];
-      }
-      $createdRaw = $t['created_at'] ?? ($t['created_on'] ?? null);
-      $createdDate = $createdRaw ? date('Y-m-d', strtotime($createdRaw)) : date('Y-m-d');
-      $teamsData[] = [
-        'id' => (string)$t['id'],
-        'name' => (string)$t['name'],
-        'description' => (string)($t['description'] ?? ''),
-        'teamLead' => $lead ? (string)$lead['name'] : '',
-        'members' => $membersOut,
-        'projects' => [],
-        'createdDate' => $createdDate,
-        'status' => 'active',
-        'color' => '#3b82f6',
-      ];
     }
-  } catch (Exception $e) { $teamsData = []; }
 }
 ?>
+
 <?php include 'includes/header.php'; ?>
-<div class="container-fluid">
- 
-  <div class="d-flex align-items-center justify-content-between mb-3">
-    <div>
-      <h2 class="mb-1">Team Management</h2>
-      <div class="text-muted">Create and manage teams for project collaboration</div>
-    </div>
-    <div>
-      <button class="btn btn-outline-secondary" id="open-create" type="button" onclick="openCreate()"><i class="fa-solid fa-plus me-2"></i>Create Team</button>
-    </div>
-  </div>
-  <?php if (!$pdo): ?>
-    <div class="alert alert-danger">Database connection is unavailable.</div>
-  <?php endif; ?>
-  
+<style>
+    .card-hover { transition: all 0.3s; border-radius: 15px; border: 1px solid #eee; }
+    .card-hover:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0,0,0,0.05); }
+    .avatar { background: var(--primary-grad); color: white; font-weight: bold; }
+    .color-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .list .row { display: flex; align-items: center; gap: 10px; padding: 10px; border-bottom: 1px solid #f1f5f9; cursor: pointer; }
+    .list .row:hover { background: #f8fafc; }
+    .list .row.active { background: #eff6ff; }
+</style>
 
-  <div class="row g-3" id="stats"></div>
-
-  <div class="mb-3">
-    <div class="input-group">
-      <span class="input-group-text"><i class="fa-solid fa-magnifying-glass"></i></span>
-      <input class="form-control" id="search" placeholder="Search teams...">
-    </div>
-  </div>
-
-  <div class="card card-hover">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <div class="fw-medium">Teams</div>
-      <div class="text-muted small">Manage and view all teams in the organization</div>
-    </div>
-    <div class="card-body">
-      <table class="table table-hover align-middle">
-        <thead>
-          <tr>
-            <th>Team Name</th>
-            <th>Project Manager</th>
-            <th>Members</th>
-            <th>Projects</th>
-            <th>Created Date</th>
-            <th>Status</th>
-            <th class="text-end">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="teams-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="modal fade" id="createModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">Create New Team</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+<div class="container-fluid py-4">
+    <div class="d-flex align-items-center justify-content-between mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">Team Management</h2>
+            <div class="text-muted">Create and manage teams for project collaboration</div>
         </div>
-        <form class="modal-body" id="createForm" method="POST" autocomplete="off">
-          <input type="hidden" name="color" id="colorInput" value="#3b82f6">
-          <input type="hidden" name="project_manager_id" id="projectManagerInput" value="<?= (int)$userId ?>">
-          <div id="memberIdsWrap"></div>
-          <label class="label" for="create-team-name">Team Name *</label>
-          <input class="form-control" id="create-team-name" name="name" placeholder="Enter team name">
-          <label class="label" for="create-team-description">Description</label>
-          <textarea class="form-control" id="create-team-description" name="description" placeholder="Enter team description and purpose"></textarea>
-          <div class="label">Team Color</div>
-          <div class="color-grid" id="create-color-grid"></div>
-          <div class="label">Project Manager *</div>
-          <div class="list" id="create-leads"></div>
-          <div class="label">Team Members * (Select at least one)</div>
-          <div class="list" id="create-members"></div>
-          <div class="label">Manual Member Emails (optional)</div>
-          <textarea class="form-control" name="members" id="create-members-raw" placeholder="Enter member emails separated by commas or newlines"></textarea>
-        </form>
-        <div class="modal-footer">
-          <button class="btn btn-outline" id="create-cancel" type="button" data-bs-dismiss="modal">Cancel</button>
-          <button class="btn" id="create-confirm" type="submit" form="createForm">Create Team</button>
-        </div>
-      </div>
+        <button class="btn btn-primary shadow-sm px-4" style="border-radius:12px; background:var(--primary-grad); border:none;" onclick="openCreate()">
+            <i class="fa-solid fa-plus me-2"></i>Create Team
+        </button>
     </div>
-  </div>
 
-  <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">Edit Team</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <form class="modal-body" id="editForm" method="POST" autocomplete="off">
-          <input type="hidden" name="update_team_id" id="editTeamIdInput">
-          <input type="hidden" name="project_manager_id" id="editProjectManagerInput">
-          <input type="hidden" name="color" id="editColorInput" value="#3b82f6">
-          <input type="hidden" name="name" id="editNameInput">
-          <input type="hidden" name="description" id="editDescInput">
-          <div id="editMemberIdsWrap"></div>
-          <label class="label" for="edit-team-name">Team Name *</label>
-          <input class="form-control" id="edit-team-name" placeholder="Enter team name">
-          <label class="label" for="edit-team-description">Description</label>
-          <textarea class="form-control" id="edit-team-description" placeholder="Enter team description and purpose"></textarea>
-          <div class="label">Team Color</div>
-          <div class="color-grid" id="edit-color-grid"></div>
-          <div class="label">Project Manager *</div>
-          <div class="list" id="edit-leads"></div>
-          <div class="label">Team Members * (Select at least one)</div>
-          <div class="list" id="edit-members"></div>
-        </form>
-        <div class="modal-footer">
-          <button class="btn btn-outline" id="edit-cancel" type="button" data-bs-dismiss="modal">Cancel</button>
-          <button class="btn" id="edit-confirm" type="button">Update Team</button>
-        </div>
-      </div>
-    </div>
-  </div>
+    <div class="row g-3 mb-4" id="stats"></div>
 
-  <div class="modal fade" id="viewModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content" id="view-modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="view-title"></h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <div class="modal-body">
-          <div class="mutelist">
-            <div>
-              <div class="label">Project Manager</div>
-              <div id="view-lead"></div>
+    <div class="card card-hover shadow-sm border-0">
+        <div class="card-body">
+            <div class="input-group mb-4" style="max-width: 400px;">
+                <span class="input-group-text bg-light border-0"><i class="bi bi-search"></i></span>
+                <input class="form-control bg-light border-0" id="search" placeholder="Search teams...">
             </div>
-            <div>
-              <div class="label">Status</div>
-              <div class="status" id="view-status"></div>
-            </div>
-            <div>
-              <div class="label">Created Date</div>
-              <div id="view-date"></div>
-            </div>
-            <div>
-              <div class="label">Total Members</div>
-              <div id="view-total"></div>
-            </div>
-          </div>
-          <div class="separator"></div>
-          <div>
-            <div class="label" id="view-members-label"></div>
-            <div id="view-members"></div>
-          </div>
-          <div class="separator" id="projects-sep" style="display:none"></div>
-          <div id="view-projects-wrap" style="display:none">
-            <div class="label" id="view-projects-label"></div>
-            <div id="view-projects"></div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-outline" id="view-close" type="button" data-bs-dismiss="modal">Close</button>
-        </div>
-      </div>
-    </div>
-  </div>
 
-  <div class="toast-wrap" id="toast-wrap"></div>
-  <form id="deleteForm" method="POST" style="display:none"><input type="hidden" name="delete_team_id" id="deleteTeamId"></form>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Team Name</th>
+                            <th>Lead</th>
+                            <th>Members</th>
+                            <th>Created</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="teams-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </div>
 
+<div class="modal fade" id="createModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <form class="modal-content border-0 shadow" id="createForm" method="POST" style="border-radius:20px;">
+            <div class="modal-header border-0 p-4">
+                <h5 class="fw-bold">Create New Team</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4 pt-0">
+                <div id="memberIdsWrap"></div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Team Name</label>
+                    <input class="form-control" name="name" required placeholder="e.g. Web Development Team">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Description</label>
+                    <textarea class="form-control" name="description" rows="2"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Select Team Lead</label>
+                    <div class="list border rounded" id="create-leads" style="max-height:200px; overflow-y:auto;"></div>
+                    <input type="hidden" name="project_manager_id" id="projectManagerInput">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Select Members</label>
+                    <div class="list border rounded" id="create-members" style="max-height:200px; overflow-y:auto;"></div>
+                </div>
+            </div>
+            <div class="modal-footer border-0 p-4">
+                <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary rounded-pill px-4" style="background:var(--primary-grad); border:none;">Create Team</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <form class="modal-content border-0 shadow" id="editForm" method="POST" style="border-radius:20px;">
+            <input type="hidden" name="update_team_id" id="editTeamIdInput">
+            <input type="hidden" name="project_manager_id" id="editProjectManagerInput">
+            <div class="modal-header border-0 p-4">
+                <h5 class="fw-bold">Edit Team</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4 pt-0">
+                <div id="editMemberIdsWrap"></div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Team Name</label>
+                    <input class="form-control" name="name" id="edit-team-name" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Description</label>
+                    <textarea class="form-control" name="description" id="edit-team-description" rows="2"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Change Lead</label>
+                    <div class="list border rounded" id="edit-leads" style="max-height:200px; overflow-y:auto;"></div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Manage Members</label>
+                    <div class="list border rounded" id="edit-members" style="max-height:200px; overflow-y:auto;"></div>
+                </div>
+            </div>
+            <div class="modal-footer border-0 p-4">
+                <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary rounded-pill px-4">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<form id="deleteForm" method="POST" style="display:none">
+    <input type="hidden" name="delete_team_id" id="deleteTeamId">
+</form>
+
 <script>
-var userRole = <?php echo json_encode($role); ?>;
-var teamLeads = <?php echo json_encode($teamLeads, JSON_UNESCAPED_UNICODE); ?>;
-var activeMembers = <?php echo json_encode($activeMembers, JSON_UNESCAPED_UNICODE); ?>;
-var teamColors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#f97316'];
-var teams = <?php echo json_encode($teamsData, JSON_UNESCAPED_UNICODE); ?>;
-var searchQuery = '';
-var selectedTeam = null;
-var createState = { name:'', description:'', lead:'', members:[], color:teamColors[0] };
-var editState = { id:'', name:'', description:'', lead:'', members:[], color:teamColors[0] };
-function toast(msg,type){var w=document.getElementById('toast-wrap');var t=document.createElement('div');t.className='toast'+(type?' '+type:'');t.textContent=msg;w.appendChild(t);setTimeout(function(){w.removeChild(t)},2500)}
-function renderStats(){var totalTeams=teams.length;var activeTeams=teams.filter(function(t){return t.status==='active'}).length;var totalMembers=teams.reduce(function(a,t){return a+t.members.length},0);var activeProjects=teams.reduce(function(a,t){return a+t.projects.length},0);var avgSize=teams.length>0?Math.round(totalMembers/teams.length):0;var s=document.getElementById('stats');s.innerHTML='';var cards=[
-  {title:'Total Teams',icon:'fa-users',value:totalTeams,sub:activeTeams+' active'},
-  {title:'Total Members',icon:'fa-user',value:totalMembers,sub:'Across all teams'},
-  {title:'Active Projects',icon:'fa-circle-check',value:activeProjects,sub:'Assigned to teams'},
-  {title:'Avg Team Size',icon:'fa-users',value:avgSize,sub:'Members per team'}
-];
-cards.forEach(function(c){var col=document.createElement('div');col.className='col-sm-6 col-md-3';var card=document.createElement('div');card.className='card card-hover';var header=document.createElement('div');header.className='card-header d-flex justify-content-between align-items-center';var title=document.createElement('div');title.className='small text-muted';title.textContent=c.title;var icon=document.createElement('i');icon.className='fa-solid '+c.icon+' text-muted';header.appendChild(title);header.appendChild(icon);var body=document.createElement('div');body.className='card-body';var value=document.createElement('div');value.style.fontSize='22px';value.textContent=String(c.value);var sub=document.createElement('div');sub.className='text-muted small';sub.textContent=c.sub;body.appendChild(value);body.appendChild(sub);card.appendChild(header);card.appendChild(body);col.appendChild(card);s.appendChild(col)});}
-function filtered(){if(!searchQuery)return teams;var q=searchQuery.toLowerCase();return teams.filter(function(team){return team.name.toLowerCase().includes(q)||team.description.toLowerCase().includes(q)||team.teamLead.toLowerCase().includes(q)})}
-function renderTable(){var body=document.getElementById('teams-body');body.innerHTML='';var list=filtered();if(list.length===0){var tr=document.createElement('tr');tr.className='tr';var td=document.createElement('td');td.className='td';td.colSpan=7;td.style.textAlign='center';td.innerHTML='<span class="muted">No teams found</span>';tr.appendChild(td);body.appendChild(tr);return}
-list.forEach(function(team){var tr=document.createElement('tr');tr.className='tr';var nameTd=document.createElement('td');nameTd.className='td';var desc=team.description?('<div class="muted" style="font-size:11px">'+team.description+'</div>'):'';nameTd.innerHTML='<div style="display:flex;align-items:center;gap:8px"><div class="color-dot" style="background:'+team.color+'"></div><div><div>'+team.name+'</div>'+desc+'</div></div>';
-var leadTd=document.createElement('td');leadTd.className='td';leadTd.textContent=team.teamLead;
-  var memTd=document.createElement('td');memTd.className='td';var memWrap=document.createElement('div');memWrap.style.display='flex';memWrap.style.alignItems='center';memWrap.style.gap='6px';var avWrap=document.createElement('div');avWrap.style.display='flex';avWrap.style.alignItems='center';avWrap.style.gap='0';var countShown=0;team.members.slice(0,3).forEach(function(m){var av=document.createElement('div');av.className='avatar';av.textContent=m.avatar;av.style.width='32px';av.style.height='32px';av.style.border='2px solid #fff';av.style.boxShadow='0 0 0 1px #e5e7eb';av.style.borderRadius='9999px';av.style.display='flex';av.style.alignItems='center';av.style.justifyContent='center';av.style.fontSize='12px';av.style.marginLeft=countShown>0?'-8px':'0';avWrap.appendChild(av);countShown++});memWrap.appendChild(avWrap);if(team.members.length>3){var more=document.createElement('span');more.className='muted';more.style.marginLeft='6px';more.textContent='+'+(team.members.length-3)+' more';memWrap.appendChild(more)}memTd.appendChild(memWrap);
-var projTd=document.createElement('td');projTd.className='td';projTd.textContent=team.projects.length;
-var dateTd=document.createElement('td');dateTd.className='td';dateTd.textContent=(new Date(team.createdDate)).toLocaleDateString();
-var statusTd=document.createElement('td');statusTd.className='td';var b=document.createElement('span');b.className='badge '+(team.status==='active'?'badge-default':'badge-secondary');b.textContent=team.status;statusTd.appendChild(b);
-  var actTd=document.createElement('td');actTd.className='td';actTd.style.textAlign='right';var dd=document.createElement('div');dd.className='dropdown';var trigger=document.createElement('button');trigger.className='btn btn-outline-secondary dropdown-toggle';trigger.type='button';trigger.setAttribute('data-bs-toggle','dropdown');trigger.setAttribute('aria-expanded','false');trigger.style.padding='4px 8px';trigger.innerHTML='<i class="fa-solid fa-ellipsis-vertical"></i>';var menu=document.createElement('ul');menu.className='dropdown-menu dropdown-menu-end';var liView=document.createElement('li');var viewBtn=document.createElement('button');viewBtn.type='button';viewBtn.className='dropdown-item';viewBtn.innerHTML='<i class="fa-regular fa-eye me-2"></i>View Details';viewBtn.onclick=function(){openView(team);var el=document.getElementById('viewModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}};liView.appendChild(viewBtn);menu.appendChild(liView);if(userRole==='admin'||userRole==='project_manager'){var liEdit=document.createElement('li');var editBtn=document.createElement('button');editBtn.type='button';editBtn.className='dropdown-item';editBtn.innerHTML='<i class="fa-solid fa-pen me-2"></i>Edit Team';editBtn.onclick=function(){openEdit(team)};liEdit.appendChild(editBtn);menu.appendChild(liEdit);var liDel=document.createElement('li');var delBtn=document.createElement('button');delBtn.type='button';delBtn.className='dropdown-item';delBtn.style.color='#dc3545';delBtn.innerHTML='<i class="fa-solid fa-trash me-2"></i>Delete Team';delBtn.onclick=function(){handleDeleteTeam(team.id)};liDel.appendChild(delBtn);menu.appendChild(liDel)}dd.appendChild(trigger);dd.appendChild(menu);actTd.appendChild(dd);
-tr.appendChild(nameTd);tr.appendChild(leadTd);tr.appendChild(memTd);tr.appendChild(projTd);tr.appendChild(dateTd);tr.appendChild(statusTd);tr.appendChild(actTd);body.appendChild(tr)});
+const teams = <?= json_encode($teamsData) ?>;
+const teamLeads = <?= json_encode($teamLeads) ?>;
+const activeMembers = <?= json_encode($activeMembers) ?>;
+const currentUserId = <?= $userId ?>;
+
+function renderStats() {
+    const stats = document.getElementById('stats');
+    const cards = [
+        {title: 'Total Teams', val: teams.length, icon: 'bi-people'},
+        {title: 'Total Personnel', val: activeMembers.length, icon: 'bi-person-badge'},
+        {title: 'Active Leads', val: teamLeads.length, icon: 'bi-award'}
+    ];
+    stats.innerHTML = cards.map(c => `
+        <div class="col-md-4">
+            <div class="card card-hover border-0 shadow-sm p-3">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="bg-light p-3 rounded-circle text-primary"><i class="bi ${c.icon} fs-4"></i></div>
+                    <div><h4 class="fw-bold mb-0">${c.val}</h4><small class="text-muted">${c.title}</small></div>
+                </div>
+            </div>
+        </div>
+    `).join('');
 }
-function populateColors(targetId,state){var grid=document.getElementById(targetId);grid.innerHTML='';teamColors.forEach(function(color){var c=document.createElement('button');c.className='color-choice'+(state.color===color?' active':'');c.style.background=color;c.style.width='24px';c.style.height='24px';c.style.borderRadius='9999px';c.style.border='2px solid '+(state.color===color?'#5b2aa7':'transparent');c.style.cursor='pointer';c.onclick=function(){state.color=color;populateColors(targetId,state)};grid.appendChild(c)})}
-function initials(name){var parts=(name||'').trim().split(/\s+/);var a=(parts[0]||'').charAt(0);var b=(parts[1]||'').charAt(0);var v=(a+b).toUpperCase();return v||'U'}
-function staffLabel(staff){var wrap=document.createElement('div');wrap.className='row';wrap.setAttribute('data-lead-id', String(staff.id));var radio=document.createElement('input');radio.type='radio';radio.className='radio';var av=document.createElement('div');av.className='avatar';av.textContent=initials(staff.name);var info=document.createElement('div');var name=document.createElement('div');name.textContent=staff.name;var email=document.createElement('div');email.className='email';email.textContent=staff.email||'';info.appendChild(name);info.appendChild(email);var role=document.createElement('span');role.className='badge';role.textContent=String(staff.role||'').replace('_',' ');wrap.appendChild(radio);wrap.appendChild(av);wrap.appendChild(info);wrap.appendChild(role);return {wrap:wrap,control:radio}}
-function populateLeads(targetId,state){var list=document.getElementById(targetId);list.innerHTML='';(teamLeads||[]).forEach(function(staff){var item=staffLabel(staff);item.control.name=targetId+'-lead';item.control.checked=state.lead===String(staff.id);item.control.onchange=function(){state.lead=String(staff.id);populateMembers(targetId.replace('leads','members'),state)};list.appendChild(item.wrap)})}
-function populateMembers(targetId,state){var list=document.getElementById(targetId);list.innerHTML='';(activeMembers||[]).forEach(function(staff){var wrap=document.createElement('div');wrap.className='row';wrap.setAttribute('data-member-id', String(staff.id));var cb=document.createElement('input');cb.type='checkbox';cb.className='checkbox';cb.checked=state.members.indexOf(String(staff.id))!==-1||String(staff.id)===state.lead;cb.disabled=String(staff.id)===state.lead;cb.onchange=function(){var sid=String(staff.id);var i=state.members.indexOf(sid);if(i!==-1){state.members.splice(i,1)}else{state.members.push(sid)}wrap.classList.toggle('active', cb.checked)};var av=document.createElement('div');av.className='avatar';av.textContent=initials(staff.name);var info=document.createElement('div');var name=document.createElement('div');name.textContent=staff.name;var email=document.createElement('div');email.className='email';email.textContent=staff.email||'';info.appendChild(name);info.appendChild(email);var role=document.createElement('span');role.className='badge';role.textContent=String(staff.role||'').replace('_',' ');wrap.appendChild(cb);wrap.appendChild(av);wrap.appendChild(info);wrap.appendChild(role);wrap.classList.toggle('active', cb.checked);list.appendChild(wrap)})}
-function openCreate(){createState={name:'',description:'',lead:String(document.getElementById('projectManagerInput').value||''),members:[],color:teamColors[0]};document.getElementById('create-team-name').value='';document.getElementById('create-team-description').value='';populateColors('create-color-grid',createState);populateLeads('create-leads',createState);populateMembers('create-members',createState);var cm=document.getElementById('create-members');if(cm){cm.style.maxHeight='240px';cm.style.overflowY='auto'}var el=document.getElementById('createModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}}
-function closeCreate(){var el=document.getElementById('createModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).hide()}}
-function updateMemberHiddenInputsFrom(containerId){var memberIdsWrap=document.getElementById('memberIdsWrap');memberIdsWrap.innerHTML='';var ids=[];document.querySelectorAll('#'+containerId+' [data-member-id]').forEach(function(item){var cb=item.querySelector('input[type="checkbox"]');if(cb && cb.checked){ids.push(item.getAttribute('data-member-id'))}});ids.forEach(function(id){var input=document.createElement('input');input.type='hidden';input.name='member_ids[]';input.value=id;memberIdsWrap.appendChild(input)})}
-function syncLeadInMembers(){var leadId=document.getElementById('projectManagerInput').value;document.querySelectorAll('#create-members [data-member-id]').forEach(function(item){var id=item.getAttribute('data-member-id');var cb=item.querySelector('input[type="checkbox"]');if(id===String(leadId)){cb.checked=true;cb.disabled=true}else{cb.disabled=false}item.classList.toggle('active', cb.checked)});updateMemberHiddenInputsFrom('create-members')}
-function handleCreateTeam(e){if(e){e.preventDefault()}var name=document.getElementById('create-team-name').value.trim();var desc=document.getElementById('create-team-description').value.trim();createState.name=name;createState.description=desc;if(!name){toast('Please enter a team name','error');return}if(!createState.lead && !document.getElementById('projectManagerInput').value){toast('Please select a project manager','error');return}document.getElementById('colorInput').value=createState.color;document.getElementById('projectManagerInput').value=createState.lead||document.getElementById('projectManagerInput').value;updateMemberHiddenInputsFrom('create-members');var checkedCount=0;document.querySelectorAll('#create-members input[type="checkbox"]').forEach(function(cb){if(cb.checked){checkedCount++}});var raw=document.getElementById('create-members-raw')?document.getElementById('create-members-raw').value.trim():'';if(checkedCount<=1 && !raw){toast('Please select at least one team member or provide emails','error');return}document.getElementById('createForm').submit()}
-function openEdit(team){editState.id=team.id;editState.name=team.name;editState.description=team.description;var leadMember=(teamLeads||[]).find(function(s){return (s.name||'')===team.teamLead});editState.lead=leadMember?String(leadMember.id):'';editState.members=team.members.map(function(m){return String(m.id)});editState.color=team.color;document.getElementById('edit-team-name').value=editState.name;document.getElementById('edit-team-description').value=editState.description;populateColors('edit-color-grid',editState);populateLeads('edit-leads',editState);populateMembers('edit-members',editState);var em=document.getElementById('edit-members');if(em){em.style.maxHeight='240px';em.style.overflowY='auto'}var el=document.getElementById('editModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}}
-function closeEdit(){var el=document.getElementById('editModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).hide()}}
-function handleEditTeam(){var name=document.getElementById('edit-team-name').value.trim();var desc=document.getElementById('edit-team-description').value.trim();editState.name=name;editState.description=desc;if(!name){toast('Please enter a team name','error');return}if(!editState.lead){toast('Please select a project manager','error');return}if(editState.members.length===0){toast('Please select at least one team member','error');return}var editMemberIdsWrap=document.getElementById('editMemberIdsWrap');editMemberIdsWrap.innerHTML='';editState.members.forEach(function(id){var input=document.createElement('input');input.type='hidden';input.name='member_ids[]';input.value=id;editMemberIdsWrap.appendChild(input)});document.getElementById('editColorInput').value=editState.color;document.getElementById('editProjectManagerInput').value=editState.lead;document.getElementById('editTeamIdInput').value=editState.id;document.getElementById('editNameInput').value=name;document.getElementById('editDescInput').value=desc;document.getElementById('editForm').submit()}
-function handleDeleteTeam(id){if(!confirm('Are you sure you want to delete this team?')){return}document.getElementById('deleteTeamId').value=id;document.getElementById('deleteForm').submit()}
-function openView(team){selectedTeam=team;document.getElementById('view-title').innerHTML='<span style="display:inline-flex;align-items:center;gap:8px"><span style="width:14px;height:14px;border-radius:999px;background:'+team.color+';display:inline-block"></span>'+team.name+'</span>';document.getElementById('view-desc').textContent=team.description||'';document.getElementById('view-lead').textContent=team.teamLead;var st=document.createElement('span');st.className='badge '+(team.status==='active'?'badge-default':'badge-secondary');st.textContent=team.status;var vs=document.getElementById('view-status');vs.innerHTML='';vs.appendChild(st);document.getElementById('view-date').textContent=(new Date(team.createdDate)).toLocaleDateString();document.getElementById('view-total').textContent=team.members.length;document.getElementById('view-members-label').textContent='Team Members ('+team.members.length+')';var vm=document.getElementById('view-members');vm.innerHTML='';team.members.forEach(function(m){var row=document.createElement('div');row.className='row';row.style.border='1px solid #1f2937';row.style.borderRadius='8px';var av=document.createElement('div');av.className='avatar';av.style.width='36px';av.style.height='36px';av.textContent=m.avatar;var info=document.createElement('div');var name=document.createElement('div');name.textContent=m.name;var email=document.createElement('div');email.className='email';email.textContent=m.email;info.appendChild(name);info.appendChild(email);var role=document.createElement('span');role.className='badge';role.textContent=m.role.replace('_',' ');var st2=document.createElement('span');st2.className='badge '+(m.status==='active'?'badge-default':'badge-secondary');st2.textContent=m.status;row.appendChild(av);row.appendChild(info);row.appendChild(role);row.appendChild(st2);vm.appendChild(row)});var wrap=document.getElementById('view-projects-wrap');var sep=document.getElementById('projects-sep');var label=document.getElementById('view-projects-label');var vp=document.getElementById('view-projects');if(team.projects.length>0){wrap.style.display='block';sep.style.display='block';label.textContent='Assigned Projects ('+team.projects.length+')';vp.innerHTML='';team.projects.forEach(function(p){var pr=document.createElement('div');pr.className='project';var ic=document.createElement('i');ic.className='fa-solid fa-circle-check me-2 text-primary';var txt=document.createElement('span');txt.textContent=p;pr.appendChild(ic);pr.appendChild(txt);vp.appendChild(pr)})}else{wrap.style.display='none';sep.style.display='none'}var el=document.getElementById('viewModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}}
-function closeView(){var el=document.getElementById('viewModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).hide()}}
-document.getElementById('search').addEventListener('input',function(e){searchQuery=e.target.value;renderTable()});
-document.getElementById('create-cancel').addEventListener('click',closeCreate);
-var cc2=document.getElementById('create-cancel2');if(cc2){cc2.addEventListener('click',closeCreate)}
-document.getElementById('create-confirm').addEventListener('click',function(e){handleCreateTeam(e)});
-document.getElementById('edit-cancel').addEventListener('click',closeEdit);
-var ec2=document.getElementById('edit-cancel2');if(ec2){ec2.addEventListener('click',closeEdit)}
-document.getElementById('edit-confirm').addEventListener('click',handleEditTeam);
-document.getElementById('view-close').addEventListener('click',closeView);
-var vc2=document.getElementById('view-close2');if(vc2){vc2.addEventListener('click',closeView)}
-renderStats();renderTable();
-var createdFlag = <?php echo json_encode(isset($_GET['created'])); ?>;
-var updatedFlag = <?php echo json_encode(isset($_GET['updated'])); ?>;
-var deletedFlag = <?php echo json_encode(isset($_GET['deleted'])); ?>;
-if (createdFlag) { toast('Team created successfully','success'); }
-if (updatedFlag) { toast('Team updated successfully','success'); }
-if (deletedFlag) { toast('Team deleted','success'); }
-var teamsBody=document.getElementById('teams-body');if(teamsBody){teamsBody.addEventListener('click',function(e){var btn=e.target.closest('.dropdown-menu button');if(!btn)return;var tr=e.target.closest('tr');if(!tr)return;var rows=Array.prototype.slice.call(teamsBody.children);var idx=rows.indexOf(tr);var list=filtered();var team=list[idx];var text=(btn.textContent||'').trim().toLowerCase();if(text.indexOf('view')===0){openView(team);var el=document.getElementById('viewModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}}else if(text.indexOf('edit')===0){openEdit(team)}else if(text.indexOf('delete')===0){handleDeleteTeam(team.id)}})}
-document.addEventListener('click',function(e){var openDropdowns=document.querySelectorAll('.dropdown[open]');if(openDropdowns.length){var inside=false;openDropdowns.forEach(function(d){if(d.contains(e.target)){inside=true}});if(!inside){openDropdowns.forEach(function(d){d.removeAttribute('open')})}}});
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){/* handled by bootstrap modal */}});
-document.getElementById('open-create').addEventListener('click',openCreate);
-var createFormEl=document.getElementById('createForm');if(createFormEl){createFormEl.addEventListener('submit',function(e){handleCreateTeam(e)})}
+
+function renderTable() {
+    const body = document.getElementById('teams-body');
+    body.innerHTML = teams.map(t => `
+        <tr>
+            <td>
+                <div class="fw-bold text-dark">${t.name}</div>
+                <small class="text-muted">${t.description || 'No description'}</small>
+            </td>
+            <td><span class="badge bg-white text-dark border px-3 rounded-pill">${t.teamLead}</span></td>
+            <td>
+                <div class="d-flex align-items-center">
+                    ${t.members.slice(0,3).map(m => `<div class="avatar rounded-circle d-flex align-items-center justify-content-center me-n2 border border-white" style="width:32px; height:32px; font-size:10px;">${m.avatar}</div>`).join('')}
+                    ${t.members.length > 3 ? `<small class="ms-3 text-muted">+${t.members.length - 3} more</small>` : ''}
+                </div>
+            </td>
+            <td>${t.createdDate}</td>
+            <td class="text-end">
+                <button class="btn btn-sm btn-light rounded-pill px-3" onclick='openEdit(${JSON.stringify(t)})'>Edit</button>
+                <button class="btn btn-sm btn-outline-danger border-0 rounded-circle" onclick="deleteTeam(${t.id})"><i class="bi bi-trash"></i></button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openCreate() {
+    populateLeads('create-leads', currentUserId);
+    populateMembers('create-members', []);
+    new bootstrap.Modal('#createModal').show();
+}
+
+function openEdit(team) {
+    document.getElementById('editTeamIdInput').value = team.id;
+    document.getElementById('edit-team-name').value = team.name;
+    document.getElementById('edit-team-description').value = team.description;
+    
+    // Hanapin ang ID ng kasalukuyang lead base sa pangalan
+    const lead = teamLeads.find(l => l.name === team.teamLead);
+    const leadId = lead ? lead.id : 0;
+    
+    populateLeads('edit-leads', leadId);
+    populateMembers('edit-members', team.members.map(m => parseInt(m.id)));
+    new bootstrap.Modal('#editModal').show();
+}
+
+function populateLeads(containerId, selectedId) {
+    const cont = document.getElementById(containerId);
+    cont.innerHTML = teamLeads.map(l => `
+        <div class="row m-0 ${l.id == selectedId ? 'active' : ''}" onclick="selectLead('${containerId}', ${l.id}, this)">
+            <input type="radio" name="lead_radio" ${l.id == selectedId ? 'checked' : ''} style="display:none">
+            <div class="avatar rounded-circle" style="width:35px; height:35px; display:flex; align-items:center; justify-content:center; font-size:12px;">${initials_from_name(l.name)}</div>
+            <div><div class="fw-bold small">${l.name}</div><div style="font-size:10px;">${l.role}</div></div>
+        </div>
+    `).join('');
+    
+    // Set hidden input
+    const hidden = containerId.includes('create') ? 'projectManagerInput' : 'editProjectManagerInput';
+    document.getElementById(hidden).value = selectedId;
+}
+
+function selectLead(containerId, id, el) {
+    document.querySelectorAll(`#${containerId} .row`).forEach(r => r.classList.remove('active'));
+    el.classList.add('active');
+    const hidden = containerId.includes('create') ? 'projectManagerInput' : 'editProjectManagerInput';
+    document.getElementById(hidden).value = id;
+}
+
+function populateMembers(containerId, selectedIds) {
+    const cont = document.getElementById(containerId);
+    cont.innerHTML = activeMembers.map(m => `
+        <div class="row m-0">
+            <input type="checkbox" name="member_ids[]" value="${m.id}" ${selectedIds.includes(parseInt(m.id)) ? 'checked' : ''} class="form-check-input me-2">
+            <div class="fw-bold small">${m.name}</div>
+        </div>
+    `).join('');
+}
+
+function deleteTeam(id) {
+    if(confirm('Delete this team?')) {
+        document.getElementById('deleteTeamId').value = id;
+        document.getElementById('deleteForm').submit();
+    }
+}
+
+function initials_from_name(name) {
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0,2);
+}
+
+window.onload = () => {
+    renderStats();
+    renderTable();
+};
 </script>
 <?php include 'includes/footer.php'; ?>
