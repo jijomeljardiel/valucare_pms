@@ -4,11 +4,11 @@ require_once 'config/database.php';
 
 date_default_timezone_set('Asia/Manila');
 
-
 function fmtDate($d, $fmt = 'M j, Y') {
     $dt = new DateTime($d);
     return $dt->format($fmt);
 }
+
 function badgeClassPriority($p) {
     return match($p) {
         'critical' => 'badge bg-danger',
@@ -18,6 +18,7 @@ function badgeClassPriority($p) {
         default => 'badge bg-secondary'
     };
 }
+
 function statusColorClass($s) {
     $t = strtolower(trim($s));
     return match($t) {
@@ -27,6 +28,7 @@ function statusColorClass($s) {
         default => 'text-primary'
     };
 }
+
 function metricIconClass($title) {
     $t = strtolower(trim($title));
     return match($t) {
@@ -34,14 +36,9 @@ function metricIconClass($title) {
         'total tasks' => 'bi-check2-square',
         'team members' => 'bi-people',
         'overdue tasks' => 'bi-exclamation-triangle',
-        'avg performance' => 'bi-award',
-        'team velocity' => 'bi-graph-up',
         default => 'bi-info-circle'
     };
 }
-
-
-
 
 try {
   $pdo = getDBConnection();
@@ -55,7 +52,6 @@ try {
   $overdueTasksCount = 0;
   try { $overdueTasksCount = (int)($pdo->query("SELECT COUNT(*) FROM tasks t LEFT JOIN task_statuses ts ON ts.id = t.task_status_id WHERE t.due_date IS NOT NULL AND t.due_date < CURDATE() AND (ts.`key` IS NULL OR ts.`key` <> 'done')")->fetchColumn() ?: 0); } catch (Throwable $e) { $overdueTasksCount = 0; }
 
-  
   $statusRows = [];
   try { $statusRows = $pdo->query("SELECT ps.`key` AS status, COUNT(*) AS cnt FROM projects p JOIN project_statuses ps ON ps.id = p.project_status_id GROUP BY ps.`key`")->fetchAll(); } catch (Throwable $e) { $statusRows = []; }
   $statusMap = ['Completed'=>0,'In Progress'=>0,'Pending'=>0,'Blocked'=>0];
@@ -69,7 +65,6 @@ try {
     else $statusMap['Pending'] += $cnt;
   }
 
-  
   $projRows = [];
   try { $projRows = $pdo->query("SELECT p.id, p.name, ps.`key` AS status, p.progress, p.due_date, p.priority FROM projects p JOIN project_statuses ps ON ps.id = p.project_status_id ORDER BY p.id DESC LIMIT 12")->fetchAll(); } catch (Throwable $e) { $projRows = []; }
   $activeProjects = array_map(function($r){
@@ -88,7 +83,6 @@ try {
     ];
   }, $projRows ?: []);
 
-  
   $criticalAlerts = [];
   foreach ($activeProjects as $p) {
     if (($p['overdue'] ?? 0) > 0) {
@@ -101,7 +95,6 @@ try {
     }
   }
 
-  
   $createdMap = [];
   $completedMap = [];
   try {
@@ -123,12 +116,6 @@ try {
     $velocity = $created > 0 ? round(($completed / $created) * 100) : 0;
     $weeklyActivity[] = ['day'=>$label,'completed'=>$completed,'created'=>$created,'velocity'=>$velocity];
   }
-  $avgVelocity = 0;
-  if (!empty($weeklyActivity)) {
-    $sum = 0; $n = 0;
-    foreach ($weeklyActivity as $w) { $sum += (int)($w['velocity'] ?? 0); $n++; }
-    $avgVelocity = $n > 0 ? round($sum / $n) : 0;
-  }
 
   $adminDashboardData = [
     'metrics' => [
@@ -148,29 +135,15 @@ try {
     'criticalAlerts' => $criticalAlerts,
   ];
 } catch (Throwable $e) {
-  
   $adminDashboardData = [
     'metrics' => [
-      ['title'=>'Active Projects','value'=>0,'change'=>null,'trend'=>null],
-      ['title'=>'Total Tasks','value'=>0,'change'=>null,'trend'=>null],
-      ['title'=>'Team Members','value'=>0,'change'=>null,'trend'=>null],
-      ['title'=>'Overdue Tasks','value'=>0,'change'=>null,'trend'=>null],
+      ['title'=>'Active Projects','value'=>0],
+      ['title'=>'Total Tasks','value'=>0],
+      ['title'=>'Team Members','value'=>0],
+      ['title'=>'Overdue Tasks','value'=>0],
     ],
-    'projectStatus' => [
-      ['name'=>'Completed','value'=>0,'color'=>'#22c55e'],
-      ['name'=>'In Progress','value'=>0,'color'=>'#3b82f6'],
-      ['name'=>'Pending','value'=>0,'color'=>'#f59e0b'],
-      ['name'=>'Blocked','value'=>0,'color'=>'#ef4444'],
-    ],
-    'weeklyActivity' => [
-      ['day'=>'Mon','completed'=>0,'created'=>0,'velocity'=>0],
-      ['day'=>'Tue','completed'=>0,'created'=>0,'velocity'=>0],
-      ['day'=>'Wed','completed'=>0,'created'=>0,'velocity'=>0],
-      ['day'=>'Thu','completed'=>0,'created'=>0,'velocity'=>0],
-      ['day'=>'Fri','completed'=>0,'created'=>0,'velocity'=>0],
-      ['day'=>'Sat','completed'=>0,'created'=>0,'velocity'=>0],
-      ['day'=>'Sun','completed'=>0,'created'=>0,'velocity'=>0],
-    ],
+    'projectStatus' => [],
+    'weeklyActivity' => [],
     'activeProjects' => [],
     'criticalAlerts' => [],
   ];
@@ -182,375 +155,264 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'metrics') {
   exit;
 }
 
-
-
-
-$totalProjects = count($adminDashboardData['activeProjects']);
-$totalCriticalAlerts = count($adminDashboardData['criticalAlerts']);
-
-
 $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_AMP|JSON_HEX_QUOT);
-
+$page_title = 'Dashboard';
+include 'includes/header.php';
 ?>
-<?php 
-  
-  $page_title = 'Dashboard';
-  $current_page = basename(__FILE__);
-  include 'includes/header.php';
-?>
-
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <style>
-  body { background:#f8fafc; color:#0f172a; padding:18px; overflow-y: auto; }
-  .muted { color:#6b7280; }
-  .card-hover:hover { transform: translateY(-6px); box-shadow: 0 12px 30px rgba(15,23,42,0.06); transition: .16s; }
-  .avatar { width:36px;height:36px;border-radius:8px;background:#e9ecef;display:flex;align-items:center;justify-content:center;font-weight:700;color:#374151; }
-  .progress-small { height:10px; }
-  .left-border-critical { border-left:4px solid #dc3545; }
-  .dot { display:inline-block;width:10px;height:10px;border-radius:2px; }
-  .search-input { max-width:420px; }
-  .collapse-toggle { cursor:pointer; }
-  .stat-number { font-size:2rem; font-weight:700; line-height:1.1; }
-  /* Ensure dashboard content can scroll */
-  .container-fluid { 
-    min-height: calc(100vh - 120px); 
-    overflow-y: auto; 
-    padding-bottom: 2rem; 
+  :root {
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.3);
   }
-  #metricsGrid .metric-card { height:100%; display:flex; flex-direction:column; }
-  .projects-scroll { max-height: 420px; overflow-y: auto; padding-right: .5rem; }
-  .section-card { height: 100%; }
-  /* Metric Computation Dialog styles */
-  .mc-dialog .section-title { display:flex; align-items:center; gap:.5rem; font-weight:600; }
-  .mc-code { font-size:.875rem; background:#f8fafc; padding:12px; border-radius:.5rem; display:block; overflow-x:auto; }
-  .mc-pre { font-size:.875rem; white-space:pre-wrap; background:#f8fafc; padding:12px; border-radius:.5rem; }
-  .mc-badges { display:flex; flex-wrap:wrap; gap:.5rem; }
-  .mc-badge { border:1px solid #e5e7eb; background:#f9fafb; color:#334155; padding:.25rem .5rem; border-radius:.375rem; font-size:.8125rem; }
-  .mc-grid { display:grid; grid-template-columns:repeat(1, minmax(0,1fr)); gap:.75rem; }
-  @media (min-width: 768px) { .mc-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } }
-</style>
-<div class="container-fluid">
-
+  body { background:#f1f5f9; color:#1e293b; padding:20px; }
+  .muted { color:#64748b; }
   
-  <div class="d-flex flex-column flex-md-row justify-content-between align-items-start mb-4">
+  .metric-card { 
+    background: white;
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+  .metric-card:hover { 
+    transform: translateY(-5px);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.05);
+    background: #fff;
+  }
+  .metric-card::after {
+    content: "";
+    position: absolute;
+    bottom: 0; left: 0; width: 100%; height: 4px;
+    background: linear-gradient(90deg, #6366f1, #a855f7);
+    opacity: 0; transition: opacity 0.3s;
+  }
+  .metric-card:hover::after { opacity: 1; }
+
+  .card { border-radius: 16px; border: none; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin-bottom: 20px; }
+  .card-header { background: transparent; border-bottom: 1px solid #f1f5f9; padding: 1.25rem; font-weight: 700; }
+  
+  .stat-number { font-size: 2.25rem; font-weight: 800; color: #0f172a; }
+  .icon-box { 
+    width: 48px; height: 48px; 
+    border-radius: 12px; 
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem;
+    background: #f8fafc;
+    color: #6366f1;
+  }
+
+  .projects-scroll { max-height: 450px; overflow-y: auto; padding: 5px; }
+  .project-item { padding: 15px; border-radius: 12px; border: 1px solid #f1f5f9; transition: background 0.2s; }
+  .project-item:hover { background: #f8fafc; }
+  
+  .progress-small { height: 8px; border-radius: 10px; background: #f1f5f9; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right: 8px; }
+
+  .alert-critical { border-left: 5px solid #ef4444; background: #fff1f2; }
+  
+  .table thead th { background: #f8fafc; border: none; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; color: #64748b; }
+</style>
+
+<div class="container-fluid">
+  <div class="d-flex flex-column flex-md-row justify-content-between align-items-center mb-4">
     <div>
-      <h2 class="mb-0">System Overview</h2>
-      <div class="muted">Complete overview of development activities and team performance</div>
+      <h2 class="fw-extrabold tracking-tight mb-0">System Overview</h2>
+      <p class="muted mb-0">Live analytics and project health monitoring.</p>
     </div>
-    <div class="mt-3 mt-md-0 d-flex gap-2 align-items-center">
-      <input id="projectSearch" class="form-control form-control-sm search-input" placeholder="Search active projects..." />
-      <button id="toggleAlertsBtn" class="btn btn-outline-secondary btn-sm ms-2"><i class="bi bi-bell"></i> Toggle Alerts</button>
+    <div class="mt-3 mt-md-0 d-flex gap-3">
+      <div class="input-group">
+        <span class="input-group-text bg-white border-end-0"><i class="bi bi-search"></i></span>
+        <input id="projectSearch" class="form-control border-start-0" placeholder="Search projects..." style="width: 250px;">
+      </div>
     </div>
   </div>
 
-  
-  <div class="row row-cols-2 row-cols-md-4 g-3 mb-4" id="metricsGrid">
+  <div class="row g-3 mb-4" id="metricsGrid">
     <?php foreach($adminDashboardData['metrics'] as $m): ?>
-      <div class="col">
-        <div class="card p-3 card-hover metric-card" data-metric="<?= htmlspecialchars($m['title']) ?>">
-          <div class="d-flex justify-content-between align-items-center">
-            <div class="small muted d-flex align-items-center gap-2">
-              <i class="bi <?= metricIconClass($m['title']) ?> me-2"></i>
-              <span><?= htmlspecialchars($m['title']) ?></span>
+      <div class="col-6 col-md-3">
+        <div class="card p-4 metric-card" onclick="window.location.href='project_task.php'">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div class="icon-box">
+              <i class="bi <?= metricIconClass($m['title']) ?>"></i>
             </div>
-            <?php if(!empty($m['trend'])): ?>
-              <span class="badge bg-secondary"><?= htmlspecialchars($m['trend']) ?></span>
-            <?php endif; ?>
           </div>
-          <div class="stat-number mt-1"><?= htmlspecialchars($m['value']) ?></div>
-          <div class="small muted mt-1 d-flex justify-content-between align-items-center">
-            <span><?= htmlspecialchars($m['change']) ?></span>
-          </div>
+          <div class="small muted fw-bold text-uppercase"><?= htmlspecialchars($m['title']) ?></div>
+          <div class="stat-number"><?= htmlspecialchars($m['value']) ?></div>
         </div>
       </div>
     <?php endforeach; ?>
   </div>
 
-  
-  <div class="row g-3 mb-4">
+  <?php if (!empty($adminDashboardData['criticalAlerts'])): ?>
+  <div class="row mb-4">
     <div class="col-12">
-      <div class="card border-danger bg-danger bg-opacity-10" id="alertsCard">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start">
-            <div>
-              <h5 class="mb-1 text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Critical Alerts</h5>
-              <div class="muted">Issues requiring immediate attention</div>
-            </div>
-            <div class="text-end">
-              <div class="h4 mb-0"><?= $totalCriticalAlerts ?></div>
-              <div class="muted">active</div>
-            </div>
-          </div>
-
-          <div class="mt-3" id="alertsList">
-            <?php foreach($adminDashboardData['criticalAlerts'] as $a):
-              $dot = $a['priority'] === 'critical' ? '#dc3545' : ($a['priority'] === 'high' ? '#fd7e14' : '#f59e0b');
+      <div class="card border-0 shadow-sm overflow-hidden">
+        <div class="card-header bg-white d-flex align-items-center">
+            <i class="bi bi-exclamation-octagon-fill text-danger me-2"></i>
+            <span>Critical Alerts Requiring Attention</span>
+        </div>
+        <div class="card-body p-0">
+          <div id="alertsList">
+            <?php foreach($adminDashboardData['criticalAlerts'] as $a): 
+              $color = $a['priority'] === 'high' ? '#f59e0b' : '#ef4444';
             ?>
-              <div class="d-flex justify-content-between align-items-center p-3 bg-white rounded mb-2">
-                <div class="d-flex gap-3 align-items-center">
-                  <div><span class="dot" style="background:<?= $dot ?>"></span></div>
+              <div class="d-flex justify-content-between align-items-center p-3 border-bottom alert-critical">
+                <div class="d-flex align-items-center">
+                  <span class="dot" style="background:<?= $color ?>"></span>
                   <div>
-                    <div class="fw-medium"><?= htmlspecialchars($a['title']) ?></div>
-                    <div class="small muted"><?= htmlspecialchars($a['project']) ?></div>
+                    <div class="fw-bold"><?= htmlspecialchars($a['title']) ?></div>
+                    <div class="small muted">Project: <?= htmlspecialchars($a['project']) ?></div>
                   </div>
                 </div>
-                <div class="d-flex gap-3 align-items-center">
-                  <div class="small muted"><?= htmlspecialchars($a['age']) ?></div>
-                  <button class="btn btn-sm btn-danger investigate-btn" data-project="<?= htmlspecialchars($a['project']) ?>">Investigate</button>
-                </div>
+                <button class="btn btn-sm btn-dark rounded-pill px-3 investigate-btn" data-project="<?= htmlspecialchars($a['project']) ?>">Action</button>
               </div>
             <?php endforeach; ?>
           </div>
-
         </div>
       </div>
     </div>
   </div>
+  <?php endif; ?>
 
-  
-  <div class="row g-3 mb-4">
-    <div class="col-lg-6">
-      <div class="card card-hover section-card">
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card h-100">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <h5 class="mb-0">Project Development Status</h5>
+          <span class="badge bg-primary rounded-pill"><?= count($adminDashboardData['activeProjects']) ?> Total</span>
+        </div>
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <div>
-              <h5 class="mb-0">Active Development Projects</h5>
-              <div class="muted">Current status of active projects</div>
-            </div>
-            <div class="muted"><?= count($adminDashboardData['activeProjects']) ?> projects</div>
-          </div>
-
           <div id="projectsList" class="projects-scroll">
             <?php foreach($adminDashboardData['activeProjects'] as $proj): ?>
-              <div class="mb-3 project-item" data-name="<?= htmlspecialchars(strtolower($proj['name'])) ?>">
-                <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="project-item mb-3" data-name="<?= htmlspecialchars(strtolower($proj['name'])) ?>">
+                <div class="d-flex justify-content-between align-items-center mb-2">
                   <div>
-                    <div class="fw-medium"><?= htmlspecialchars($proj['name']) ?></div>
-                    <div class="small muted">
-                      <span class="<?= statusColorClass($proj['status']) ?>"><?= htmlspecialchars($proj['status']) ?></span>
-                      <?php if($proj['overdue']>0): ?>
-                        <span class="badge bg-danger ms-2"><?= $proj['overdue'] ?> overdue</span>
-                      <?php endif; ?>
-                    </div>
+                    <div class="fw-bold h6 mb-0"><?= htmlspecialchars($proj['name']) ?></div>
+                    <span class="small fw-bold <?= statusColorClass($proj['status']) ?>"><?= strtoupper($proj['status']) ?></span>
                   </div>
                   <div class="text-end">
-                    <div class="fw-medium"><?= $proj['progress'] ?>%</div>
-                    <div class="small muted"><?= $proj['team'] ?> members</div>
+                    <span class="fw-bold"><?= $proj['progress'] ?>%</span>
+                    <div class="small muted">Completion</div>
                   </div>
                 </div>
                 <div class="progress progress-small">
-                  <div class="progress-bar" role="progressbar" style="width: <?= $proj['progress'] ?>%" aria-valuenow="<?= $proj['progress'] ?>" aria-valuemin="0" aria-valuemax="100"></div>
+                  <div class="progress-bar bg-primary" role="progressbar" style="width: <?= $proj['progress'] ?>%"></div>
                 </div>
+                <?php if($proj['overdue'] > 0): ?>
+                  <div class="mt-2 small text-danger fw-bold"><i class="bi bi-clock-history me-1"></i> PAST DUE DATE</div>
+                <?php endif; ?>
               </div>
             <?php endforeach; ?>
           </div>
-
-          <div class="mt-3 d-flex gap-2">
-            <button id="filterHighBtn" class="btn btn-outline-primary btn-sm">Show High Priority</button>
-            <button id="showAllBtn" class="btn btn-outline-secondary btn-sm">Show All</button>
-          </div>
+        </div>
+        <div class="card-footer bg-white border-0 d-flex gap-2 p-3">
+            <button id="filterHighBtn" class="btn btn-light btn-sm fw-bold">High Priority</button>
+            <button id="showAllBtn" class="btn btn-primary btn-sm fw-bold">Show All</button>
         </div>
       </div>
     </div>
 
-    
-    <div class="col-lg-6">
-      <div class="card card-hover mb-3">
+    <div class="col-lg-5">
+      <div class="card mb-4">
+        <div class="card-header bg-white">Task Distribution</div>
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="mb-0">Task Status Distribution</h5>
-            <div class="muted">Overview</div>
-          </div>
-          <canvas id="statusPie" style="max-height:260px"></canvas>
+          <canvas id="statusPie" style="height:250px"></canvas>
         </div>
       </div>
-
-      <div class="card card-hover">
+      <div class="card">
+        <div class="card-header bg-white">Velocity Trend</div>
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="mb-0">Weekly Development Activity</h5>
-            <div class="muted">Completed / Created / Velocity</div>
-          </div>
-          <canvas id="weeklyChart" style="max-height:300px"></canvas>
+          <canvas id="weeklyChart" style="height:250px"></canvas>
         </div>
       </div>
     </div>
   </div>
 
-  
-  <div class="row g-3 mb-4">
+  <div class="row mt-4">
     <div class="col-12">
       <div class="card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between mb-2">
-            <h5 class="mb-0">Weekly Activity (table)</h5>
-            <div class="muted">Last 7 days</div>
-          </div>
-          <div class="table-responsive">
-            <table class="table table-sm align-middle mb-0">
-              <thead>
-                <tr class="muted">
-                  <th>Day</th>
-                  <th class="text-end">Completed</th>
-                  <th class="text-end">Created</th>
-                  <th class="text-end">Velocity %</th>
+        <div class="card-header bg-white">Weekly Activity Metrics</div>
+        <div class="table-responsive">
+          <table class="table align-middle mb-0">
+            <thead>
+              <tr>
+                <th class="ps-4">Reporting Day</th>
+                <th class="text-center">Tasks Completed</th>
+                <th class="text-center">Tasks Created</th>
+                <th class="text-end pe-4">Team Velocity (%)</th>
+              </tr>
+            </thead>
+            <tbody id="weeklyTableBody">
+              <?php foreach($adminDashboardData['weeklyActivity'] as $row): ?>
+                <tr>
+                  <td class="ps-4 fw-bold"><?= htmlspecialchars($row['day']) ?></td>
+                  <td class="text-center"><?= htmlspecialchars($row['completed']) ?></td>
+                  <td class="text-center"><?= htmlspecialchars($row['created']) ?></td>
+                  <td class="text-end pe-4">
+                    <span class="badge bg-soft-primary text-primary"><?= htmlspecialchars($row['velocity']) ?>%</span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody id="weeklyTableBody">
-                <?php foreach($adminDashboardData['weeklyActivity'] as $row): ?>
-                  <tr>
-                    <td><?= htmlspecialchars($row['day']) ?></td>
-                    <td class="text-end"><?= htmlspecialchars($row['completed']) ?></td>
-                    <td class="text-end"><?= htmlspecialchars($row['created']) ?></td>
-                    <td class="text-end"><?= htmlspecialchars($row['velocity']) ?>%</td>
-                  </tr>
-                <?php endforeach; ?>
-              </tbody>
-            </table>
-          </div>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
   </div>
-
-  
 </div>
 
-
-
 <script>
-  // Parse PHP-provided JSON
   const adminData = <?= $js_admin ?>;
 
+  // Chart Logic
   let statusPieChart = null;
   (function renderStatusPie(){
     const ctx = document.getElementById('statusPie').getContext('2d');
-    const labels = adminData.projectStatus.map(s=>s.name);
-    const data = adminData.projectStatus.map(s=>s.value);
-    const colors = adminData.projectStatus.map(s=>s.color);
     statusPieChart = new Chart(ctx, {
-      type: 'pie',
-      data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth:1 }] },
-      options: { plugins: { legend: { position:'bottom' } }, responsive:true, maintainAspectRatio:false }
+      type: 'doughnut',
+      data: {
+        labels: adminData.projectStatus.map(s=>s.name),
+        datasets: [{
+          data: adminData.projectStatus.map(s=>s.value),
+          backgroundColor: adminData.projectStatus.map(s=>s.color),
+          hoverOffset: 15,
+          borderWidth: 0
+        }]
+      },
+      options: { 
+        cutout: '70%',
+        plugins: { legend: { position:'bottom', labels: { usePointStyle: true, padding: 20 } } },
+        responsive:true, maintainAspectRatio:false 
+      }
     });
   })();
 
   let weeklyChartInstance = null;
   (function renderWeekly(){
     const ctx = document.getElementById('weeklyChart').getContext('2d');
-    const days = adminData.weeklyActivity.map(r=>r.day);
-    const completed = adminData.weeklyActivity.map(r=>r.completed);
-    const created = adminData.weeklyActivity.map(r=>r.created);
-    const velocity = adminData.weeklyActivity.map(r=>r.velocity);
     weeklyChartInstance = new Chart(ctx, {
       type: 'line',
       data: {
-        labels: days,
+        labels: adminData.weeklyActivity.map(r=>r.day),
         datasets: [
-          { label:'Completed', data:completed, borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,0.2)', tension:0.3, fill:false },
-          { label:'Created', data:created, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.2)', tension:0.3, fill:false },
-          { label:'Velocity %', data:velocity, borderColor:'#8b5cf6', backgroundColor:'rgba(139,92,246,0.2)', borderDash:[5,5], tension:0.3, fill:false }
+          { label:'Completed', data:adminData.weeklyActivity.map(r=>r.completed), borderColor:'#22c55e', tension:0.4, fill: true, backgroundColor: 'rgba(34, 197, 94, 0.05)' },
+          { label:'Created', data:adminData.weeklyActivity.map(r=>r.created), borderColor:'#3b82f6', tension:0.4, fill: false }
         ]
       },
       options: {
         responsive:true, maintainAspectRatio:false,
-        scales: { y: { beginAtZero:true } },
+        scales: { y: { beginAtZero:true, grid: { display: false } }, x: { grid: { display: false } } },
         plugins:{ legend:{ position:'bottom' } }
       }
     });
   })();
 
-  function applyData(data){
-    adminData = data;
-    document.querySelectorAll('.metric-card').forEach(card=>{
-      const title = card.getAttribute('data-metric');
-      const m = (data.metrics || []).find(x=>x.title===title);
-      if (m) {
-        const valEl = card.querySelector('.stat-number');
-        if (valEl) valEl.textContent = m.value;
-      }
-    });
-    const labels = (data.projectStatus||[]).map(s=>s.name);
-    const vals = (data.projectStatus||[]).map(s=>s.value);
-    const colors = (data.projectStatus||[]).map(s=>s.color);
-    if (statusPieChart) {
-      statusPieChart.data.labels = labels;
-      statusPieChart.data.datasets[0].data = vals;
-      statusPieChart.data.datasets[0].backgroundColor = colors;
-      statusPieChart.update();
-    }
-    const days = (data.weeklyActivity||[]).map(r=>r.day);
-    const completed = (data.weeklyActivity||[]).map(r=>r.completed);
-    const created = (data.weeklyActivity||[]).map(r=>r.created);
-    const velocity = (data.weeklyActivity||[]).map(r=>r.velocity);
-    if (weeklyChartInstance) {
-      weeklyChartInstance.data.labels = days;
-      weeklyChartInstance.data.datasets[0].data = completed;
-      weeklyChartInstance.data.datasets[1].data = created;
-      weeklyChartInstance.data.datasets[2].data = velocity;
-      weeklyChartInstance.update();
-    }
-    const tbody = document.getElementById('weeklyTableBody');
-    if (tbody) {
-      tbody.innerHTML = (data.weeklyActivity||[]).map(r=>`<tr><td>${r.day}</td><td class="text-end">${r.completed}</td><td class="text-end">${r.created}</td><td class="text-end">${r.velocity}%</td></tr>`).join('');
-    }
-    const projList = document.getElementById('projectsList');
-    if (projList) {
-      const statusClass = s => {
-        const v = String(s||'').toLowerCase();
-        if (v === 'at-risk') return 'text-warning';
-        if (v === 'blocked' || v === 'on-hold') return 'text-danger';
-        if (v === 'active' || v === 'in-progress') return 'text-success';
-        return 'text-primary';
-      };
-      projList.innerHTML = (data.activeProjects||[]).map(p=>{
-        const name = p.name || 'Untitled';
-        const progress = parseInt(p.progress||0,10);
-        const status = p.status || '';
-        const overdue = parseInt(p.overdue||0,10);
-        const team = parseInt(p.team||0,10);
-        const odBadge = overdue>0 ? `<span class="badge bg-danger ms-2">${overdue} overdue</span>` : '';
-        return `
-          <div class="mb-3 project-item" data-name="${String(name).toLowerCase()}">
-            <div class="d-flex justify-content-between align-items-center mb-1">
-              <div>
-                <div class="fw-medium">${name}</div>
-                <div class="small muted">
-                  <span class="${statusClass(status)}">${status}</span>
-                  ${odBadge}
-                </div>
-              </div>
-              <div class="text-end">
-                <div class="fw-medium">${progress}%</div>
-                <div class="small muted">${team} members</div>
-              </div>
-            </div>
-            <div class="progress progress-small">
-              <div class="progress-bar" role="progressbar" style="width: ${progress}%" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100"></div>
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-  }
-
-  function refreshDashboard(){
-    fetch('dashboard.php?ajax=metrics').then(r=>r.json()).then(applyData).catch(()=>{});
-  }
-  setInterval(refreshDashboard, 10000);
-
-  // Interactivity: Toggle Alerts
-  const alertsCard = document.getElementById('alertsCard');
-  const toggleAlertsBtn = document.getElementById('toggleAlertsBtn');
-  toggleAlertsBtn.addEventListener('click', ()=>{
-    const alertsList = document.getElementById('alertsList');
-    if(alertsList.style.display === 'none') { alertsList.style.display = ''; toggleAlertsBtn.classList.remove('btn-primary'); toggleAlertsBtn.classList.add('btn-outline-secondary'); }
-    else { alertsList.style.display = 'none'; toggleAlertsBtn.classList.remove('btn-outline-secondary'); toggleAlertsBtn.classList.add('btn-primary'); }
-  });
-
-  // Interactivity: Search active projects
+  // Search Interactivity
   const projectSearch = document.getElementById('projectSearch');
   projectSearch.addEventListener('input', function(){
     const q = this.value.trim().toLowerCase();
@@ -560,185 +422,51 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
     });
   });
 
-  // Filter: Show High Priority projects only
+  // Filters
   document.getElementById('filterHighBtn').addEventListener('click', ()=>{
     document.querySelectorAll('.project-item').forEach(item=>{
-      const name = item.querySelector('.fw-medium')?.textContent || '';
-      // find matching project in adminData
+      const name = item.querySelector('.fw-bold')?.textContent || '';
       const proj = adminData.activeProjects.find(p => p.name === name);
-      if(proj) item.style.display = (proj.priority === 'high' || proj.priority === 'critical') ? '' : 'none';
+      item.style.display = (proj && (proj.priority === 'high' || proj.priority === 'critical')) ? '' : 'none';
     });
   });
+
   document.getElementById('showAllBtn').addEventListener('click', ()=>{
     document.querySelectorAll('.project-item').forEach(item=> item.style.display = '');
     projectSearch.value = '';
   });
 
-  document.querySelectorAll('.investigate-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const project = btn.dataset.project;
-      const alertItem = (adminData.criticalAlerts || []).find(a=>a.project===project);
-      openAlertModal(alertItem);
-    });
-  });
-
-  document.querySelectorAll('.metric-card').forEach(card=>{
-    card.addEventListener('click', ()=>{
-      const metricKey = card.getAttribute('data-metric');
-      openMetricModal(metricKey);
-    });
-  });
-
-  let alertModalInstance = null;
-  function openAlertModal(alertItem){
-    const modalEl = document.getElementById('alertModal');
-    const titleEl = modalEl.querySelector('[data-alert-title]');
-    const projEl = modalEl.querySelector('[data-alert-project]');
-    const ageEl = modalEl.querySelector('[data-alert-age]');
-    const priorityEl = modalEl.querySelector('[data-alert-priority]');
-    titleEl.textContent = alertItem?.title || '';
-    projEl.textContent = alertItem?.project || '';
-    ageEl.textContent = alertItem?.age || '';
-    priorityEl.textContent = alertItem?.priority || '';
-    alertModalInstance = new bootstrap.Modal(modalEl);
-    alertModalInstance.show();
-  }
+  // Metrics Modal Logic (Remains for data transparency)
   function openMetricModal(metricKey){
     const modalEl = document.getElementById('metricModal');
-    const contentEl = modalEl.querySelector('#mcContent');
-    const metric = (adminData.metrics || []).find(x => String(x.title) === String(metricKey));
-    const value = metric?.value ?? null;
-    const details = {
-      'Active Projects': {
-        def: 'Projects with status Active or At-Risk.',
-        sql: "SELECT COUNT(*) FROM projects p JOIN project_statuses ps ON ps.id = p.project_status_id WHERE ps.`key` IN ('active','at-risk')",
-        tables: ['projects','project_statuses'],
-        notes: 'Counts current status only.'
-      },
-      'Total Tasks': {
-        def: 'All tasks in the system.',
-        sql: 'SELECT COUNT(*) FROM tasks',
-        tables: ['tasks'],
-        notes: ''
-      },
-      'Team Members': {
-        def: 'All registered users.',
-        sql: 'SELECT COUNT(*) FROM users',
-        tables: ['users'],
-        notes: ''
-      },
-      'Overdue Tasks': {
-        def: 'Tasks past due date and not marked Done.',
-        sql: "SELECT COUNT(*) FROM tasks t LEFT JOIN task_statuses ts ON ts.id = t.task_status_id WHERE t.due_date IS NOT NULL AND t.due_date < CURDATE() AND (ts.`key` IS NULL OR ts.`key` <> 'done')",
-        tables: ['tasks','task_statuses'],
-        notes: 'Excludes tasks with status Done.'
-      }
-    };
-    const d = details[metricKey];
-    if (!d) {
-      contentEl.innerHTML = '<div class="alert alert-light border">No additional details.</div>';
-    } else {
-      const valBlock = value !== null ? `<div class="section-title"><span>Current Value</span><span class="badge bg-primary">${value}</span></div>` : '';
-      const tables = (d.tables || []).map(t => `<span class="mc-badge">${t}</span>`).join('');
-      contentEl.innerHTML = `
-        ${valBlock}
-        <div class="mc-grid">
-          <div>
-            <div class="section-title"><i class="bi bi-list-check"></i><span>Definition</span></div>
-            <div class="mc-pre">${d.def}</div>
-          </div>
-          <div>
-            <div class="section-title"><i class="bi bi-database"></i><span>SQL Source</span></div>
-            <code class="mc-code">${d.sql}</code>
-          </div>
-          <div>
-            <div class="section-title"><i class="bi bi-diagram-3"></i><span>Tables</span></div>
-            <div class="mc-badges">${tables}</div>
-          </div>
-          ${d.notes ? `<div><div class="section-title"><i class="bi bi-info-circle"></i><span>Notes</span></div><div class="mc-pre">${d.notes}</div></div>` : ''}
-        </div>
-      `;
-    }
-    const m = new bootstrap.Modal(modalEl);
-    m.show();
+    const metric = (adminData.metrics || []).find(x => x.title === metricKey);
+    document.getElementById('mcContent').innerHTML = `<div class="p-4 text-center"><h5>${metricKey} Source Data</h5><p>Current System Value: <strong>${metric.value}</strong></p></div>`;
+    new bootstrap.Modal(modalEl).show();
   }
 
   function showToast(msg){
     const toastEl = document.getElementById('actionToast');
-    toastEl.querySelector('.toast-body').textContent = msg || '';
-    const t = new bootstrap.Toast(toastEl);
-    t.show();
+    toastEl.querySelector('.toast-body').textContent = msg;
+    new bootstrap.Toast(toastEl).show();
   }
-
-  // Accessibility: ensure charts redraw on resize (Chart.js handles this but keep safe)
-  window.addEventListener('resize', ()=> { /* Chart.js auto-resizes */ });
-
 </script>
-<div class="modal fade" id="alertModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+
+<div class="modal fade" id="alertModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Alert Investigation</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <div class="card mb-3 border-danger border-opacity-25">
-          <div class="card-body">
-            <div class="row g-3">
-              <div class="col-md-6">
-                <div class="small muted">Issue</div>
-                <div class="fw-medium" data-alert-title></div>
-              </div>
-              <div class="col-md-6">
-                <div class="small muted">Project</div>
-                <div class="fw-medium" data-alert-project></div>
-              </div>
-              <div class="col-md-6">
-                <div class="small muted">Priority Level</div>
-                <span class="badge bg-outline text-capitalize" data-alert-priority></span>
-              </div>
-              <div class="col-md-6">
-                <div class="small muted">Time Active</div>
-                <div class="fw-medium" data-alert-age></div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-      </div>
+      <div class="modal-header"><h5>Issue Investigation</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body"><p id="alertProjName"></p>Immediate action plan required for overdue milestones.</div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
-        <div class="d-flex gap-2">
-          <button type="button" class="btn btn-outline-secondary" onclick="showToast('Alert details exported successfully')"><i class="bi bi-file-earmark-text me-1"></i>Export Report</button>
-          <button type="button" class="btn btn-primary" onclick="showToast('Alert assigned for immediate action')"><i class="bi bi-check2-square me-1"></i>Assign for Action</button>
-          <button type="button" class="btn btn-danger" onclick="showToast('Alert escalated to emergency response')"><i class="bi bi-exclamation-triangle me-1"></i>Escalate</button>
-        </div>
+        <button class="btn btn-primary w-100" onclick="showToast('Assigned to project manager')">Assign Task</button>
       </div>
     </div>
   </div>
 </div>
-<div class="modal fade" id="metricModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content mc-dialog">
-      <div class="modal-header">
-        <h5 class="modal-title">Metric Computation Details</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <div id="mcContent"></div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
-      </div>
-    </div>
-  </div>
-</div>
+
+<div class="modal fade" id="metricModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-body" id="mcContent"></div></div></div></div>
+
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1080;">
-  <div id="actionToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
-    <div class="d-flex">
-      <div class="toast-body">Action successful</div>
-      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-    </div>
-  </div>
+  <div id="actionToast" class="toast align-items-center text-bg-dark border-0" role="alert"><div class="d-flex"><div class="toast-body"></div></div></div>
 </div>
+
 <?php include 'includes/footer.php'; ?>
