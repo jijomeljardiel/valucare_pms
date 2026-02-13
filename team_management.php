@@ -36,6 +36,9 @@ if ($pdo) {
       if (!in_array('color', $cols)) {
         $pdo->exec("ALTER TABLE teams ADD COLUMN color VARCHAR(20) NULL DEFAULT '#3b82f6'");
       }
+      if (!in_array('status', $cols)) {
+        $pdo->exec("ALTER TABLE teams ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'");
+      }
     } catch (Throwable $e) { /* ignore */ }
 
   } catch (Throwable $e) { /* ignore */ }
@@ -83,6 +86,18 @@ if ($pdo && $_SERVER['REQUEST_METHOD'] === 'POST') {
       } catch (Exception $e) {
         if ($pdo && $pdo->inTransaction()) { $pdo->rollBack(); }
         $message = 'Failed to delete team.';
+      }
+    }
+  } elseif (isset($_POST['toggle_status_id'])) {
+    $toggleId = (int)($_POST['toggle_status_id'] ?? 0);
+    $newStatus = $_POST['new_status'] ?? 'active';
+    if ($toggleId > 0 && in_array($newStatus, ['active', 'inactive'])) {
+      try {
+        $pdo->prepare('UPDATE teams SET status = ? WHERE id = ?')->execute([$newStatus, $toggleId]);
+        header('Location: team_management.php?updated=1');
+        exit;
+      } catch (Exception $e) {
+        $message = 'Failed to update status.';
       }
     }
   } elseif (isset($_POST['update_team_id'])) {
@@ -168,7 +183,7 @@ function initials_from_name($name){$parts=preg_split('/\s+/', (string)$name);$a=
 $teamsData = [];
 if ($pdo) {
   try {
-    $qTeams = $pdo->query('SELECT id, name, description, created_at, color FROM teams ORDER BY id DESC');
+    $qTeams = $pdo->query('SELECT id, name, description, created_at, color, status FROM teams ORDER BY id DESC');
     $leadStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email, u.role FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role = 'lead' LIMIT 1");
     $memberStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email, u.role, u.status FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role <> 'lead' ORDER BY u.last_name, u.first_name");
     $projStmt = $pdo->prepare("SELECT p.id, p.name, ps.`key` AS status, p.priority FROM projects p JOIN project_statuses ps ON ps.id = p.project_status_id WHERE p.team_id = ?");
@@ -221,7 +236,7 @@ if ($pdo) {
         'members' => $membersOut,
         'projects' => $projOut,
         'createdDate' => $createdDate,
-        'status' => 'active',
+        'status' => $t['status'] ?? 'active',
         'color' => $t['color'] ?? '#3b82f6',
       ];
     }
@@ -233,8 +248,7 @@ if ($pdo) {
  
   <div class="d-flex align-items-center justify-content-between mb-3">
     <div>
-      <h2 class="mb-1">Team Management</h2>
-      <div class="text-muted">Create and manage teams for project collaboration</div>
+
     </div>
     <div>
       <button class="btn btn-outline-secondary" id="open-create" type="button" onclick="openCreate()"><i class="fa-solid fa-plus me-2"></i>Create Team</button>
@@ -286,26 +300,47 @@ if ($pdo) {
           <h5 class="modal-title">Create New Team</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
-        <form class="modal-body" id="createForm" method="POST" autocomplete="off">
+        <form class="modal-body p-4" id="createForm" method="POST" autocomplete="off">
           <input type="hidden" name="color" id="colorInput" value="#3b82f6">
           <input type="hidden" name="project_manager_id" id="projectManagerInput" value="<?= (int)$userId ?>">
           <div id="memberIdsWrap"></div>
-          <label class="label" for="create-team-name">Team Name *</label>
-          <input class="form-control" id="create-team-name" name="name" placeholder="Enter team name">
-          <label class="label" for="create-team-description">Description</label>
-          <textarea class="form-control" id="create-team-description" name="description" placeholder="Enter team description and purpose"></textarea>
-          <div class="label">Team Color</div>
-          <div class="color-grid" id="create-color-grid"></div>
-          <div class="label">Project Manager *</div>
-          <div class="list" id="create-leads"></div>
-          <div class="label">Team Members * (Select at least one)</div>
-          <div class="list" id="create-members"></div>
-          <div class="label">Manual Member Emails (optional)</div>
-          <textarea class="form-control" name="members" id="create-members-raw" placeholder="Enter member emails separated by commas or newlines"></textarea>
+
+          <div class="row">
+            <div class="col-md-8 mb-3">
+              <label class="form-label fw-bold" for="create-team-name">Team Name <span class="text-danger">*</span></label>
+              <input class="form-control" id="create-team-name" name="name" placeholder="Enter team name" required>
+            </div>
+            <div class="col-md-4 mb-3">
+              <label class="form-label fw-bold">Team Color</label>
+              <div class="color-grid d-flex gap-2 flex-wrap" id="create-color-grid"></div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="create-team-description">Description</label>
+            <textarea class="form-control" id="create-team-description" name="description" rows="3" placeholder="Enter team description and purpose"></textarea>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold">Project Manager <span class="text-danger">*</span></label>
+            <div class="list border rounded p-2 bg-light" id="create-leads" style="max-height: 150px; overflow-y: auto;"></div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold">Team Members <span class="text-danger">*</span></label>
+            <div class="text-muted small mb-1">Select at least one member</div>
+            <div class="list border rounded p-2" id="create-members" style="max-height: 200px; overflow-y: auto;"></div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="create-members-raw">Invite by Email (Optional)</label>
+            <div class="text-muted small mb-1">Enter email addresses separated by commas or newlines</div>
+            <textarea class="form-control" name="members" id="create-members-raw" rows="2" placeholder="e.g. user@example.com, another@example.com"></textarea>
+          </div>
         </form>
-        <div class="modal-footer">
-          <button class="btn btn-outline" id="create-cancel" type="button" data-bs-dismiss="modal">Cancel</button>
-          <button class="btn" id="create-confirm" type="submit" form="createForm">Create Team</button>
+        <div class="modal-footer bg-light">
+          <button class="btn btn-outline-secondary" id="create-cancel" type="button" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" id="create-confirm" type="submit" form="createForm">Create Team</button>
         </div>
       </div>
     </div>
@@ -403,8 +438,57 @@ if ($pdo) {
     </div>
   </div>
 
+  <!-- Assign Project Modal -->
+  <div class="modal fade" id="assignProjectModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Assign New Project</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form class="modal-body" action="project_task.php" method="POST">
+          <input type="hidden" name="action" value="create_project">
+          <input type="hidden" name="team_id" id="assign-project-team-id">
+          <input type="hidden" name="project_manager_id" value="<?= $userId ?>">
+          
+          <div class="mb-3">
+            <label class="form-label">Project Name *</label>
+            <input type="text" name="name" class="form-control" required placeholder="Enter project name">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control" rows="3" placeholder="Project description"></textarea>
+          </div>
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Due Date *</label>
+              <input type="date" name="due_date" class="form-control" required>
+            </div>
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Priority</label>
+              <select name="priority" class="form-select">
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+          </div>
+          <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Create & Assign</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <div class="toast-wrap" id="toast-wrap"></div>
   <form id="deleteForm" method="POST" style="display:none"><input type="hidden" name="delete_team_id" id="deleteTeamId"></form>
+  <form id="statusForm" method="POST" style="display:none">
+    <input type="hidden" name="toggle_status_id" id="statusTeamId">
+    <input type="hidden" name="new_status" id="statusNewValue">
+  </form>
 </div>
 
 <script>
@@ -432,8 +516,33 @@ var leadTd=document.createElement('td');leadTd.className='td';leadTd.textContent
   var memTd=document.createElement('td');memTd.className='td';var memWrap=document.createElement('div');memWrap.style.display='flex';memWrap.style.alignItems='center';memWrap.style.gap='6px';var avWrap=document.createElement('div');avWrap.style.display='flex';avWrap.style.alignItems='center';avWrap.style.gap='0';var countShown=0;team.members.slice(0,3).forEach(function(m){var av=document.createElement('div');av.className='avatar';av.textContent=m.avatar;av.style.width='32px';av.style.height='32px';av.style.border='2px solid #fff';av.style.boxShadow='0 0 0 1px #e5e7eb';av.style.borderRadius='9999px';av.style.display='flex';av.style.alignItems='center';av.style.justifyContent='center';av.style.fontSize='12px';av.style.marginLeft=countShown>0?'-8px':'0';avWrap.appendChild(av);countShown++});memWrap.appendChild(avWrap);if(team.members.length>3){var more=document.createElement('span');more.className='muted';more.style.marginLeft='6px';more.textContent='+'+(team.members.length-3)+' more';memWrap.appendChild(more)}memTd.appendChild(memWrap);
 var projTd=document.createElement('td');projTd.className='td';projTd.textContent=team.projects.length;
 var dateTd=document.createElement('td');dateTd.className='td';dateTd.textContent=(new Date(team.createdDate)).toLocaleDateString();
-var statusTd=document.createElement('td');statusTd.className='td';var b=document.createElement('span');b.className='badge '+(team.status==='active'?'badge-default':'badge-secondary');b.textContent=team.status;statusTd.appendChild(b);
-  var actTd=document.createElement('td');actTd.className='td';actTd.style.textAlign='right';var dd=document.createElement('div');dd.className='dropdown';var trigger=document.createElement('button');trigger.className='btn btn-outline-secondary dropdown-toggle';trigger.type='button';trigger.setAttribute('data-bs-toggle','dropdown');trigger.setAttribute('aria-expanded','false');trigger.style.padding='4px 8px';trigger.innerHTML='<i class="fa-solid fa-ellipsis-vertical"></i>';var menu=document.createElement('ul');menu.className='dropdown-menu dropdown-menu-end';var liView=document.createElement('li');var viewBtn=document.createElement('button');viewBtn.type='button';viewBtn.className='dropdown-item';viewBtn.innerHTML='<i class="fa-regular fa-eye me-2"></i>View Details';viewBtn.onclick=function(){openView(team);var el=document.getElementById('viewModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}};liView.appendChild(viewBtn);menu.appendChild(liView);if(userRole==='admin'||userRole==='project_manager'){var liEdit=document.createElement('li');var editBtn=document.createElement('button');editBtn.type='button';editBtn.className='dropdown-item';editBtn.innerHTML='<i class="fa-solid fa-pen me-2"></i>Edit Team';editBtn.onclick=function(){openEdit(team)};liEdit.appendChild(editBtn);menu.appendChild(liEdit);var liDel=document.createElement('li');var delBtn=document.createElement('button');delBtn.type='button';delBtn.className='dropdown-item';delBtn.style.color='#dc3545';delBtn.innerHTML='<i class="fa-solid fa-trash me-2"></i>Delete Team';delBtn.onclick=function(){handleDeleteTeam(team.id)};liDel.appendChild(delBtn);menu.appendChild(liDel)}dd.appendChild(trigger);dd.appendChild(menu);actTd.appendChild(dd);
+var statusTd=document.createElement('td');
+statusTd.className='td';
+var b=document.createElement('span');
+b.className='badge '+(team.status==='active'?'bg-success text-white':'bg-secondary text-white');
+b.textContent=team.status;
+statusTd.appendChild(b);
+
+var actTd=document.createElement('td');actTd.className='td';actTd.style.textAlign='right';var dd=document.createElement('div');dd.className='dropdown';var trigger=document.createElement('button');trigger.className='btn btn-outline-secondary dropdown-toggle';trigger.type='button';trigger.setAttribute('data-bs-toggle','dropdown');trigger.setAttribute('aria-expanded','false');trigger.style.padding='4px 8px';trigger.innerHTML='<i class="fa-solid fa-ellipsis-vertical"></i>';var menu=document.createElement('ul');menu.className='dropdown-menu dropdown-menu-end';var liView=document.createElement('li');var viewBtn=document.createElement('button');viewBtn.type='button';viewBtn.className='dropdown-item';viewBtn.innerHTML='<i class="fa-regular fa-eye me-2"></i>View Details';viewBtn.onclick=function(){openView(team);var el=document.getElementById('viewModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}};liView.appendChild(viewBtn);menu.appendChild(liView);
+
+var liAssign=document.createElement('li');var assignBtn=document.createElement('button');assignBtn.type='button';assignBtn.className='dropdown-item';assignBtn.innerHTML='<i class="fa-solid fa-list-check me-2"></i>Assign Project';assignBtn.onclick=function(){openAssignProject(team)};liAssign.appendChild(assignBtn);menu.appendChild(liAssign);
+
+var liEmail=document.createElement('li');var emailBtn=document.createElement('button');emailBtn.type='button';emailBtn.className='dropdown-item';emailBtn.innerHTML='<i class="fa-solid fa-envelope me-2"></i>Email Team';emailBtn.onclick=function(){emailTeam(team)};liEmail.appendChild(emailBtn);menu.appendChild(liEmail);
+
+var liExport=document.createElement('li');var exportBtn=document.createElement('button');exportBtn.type='button';exportBtn.className='dropdown-item';exportBtn.innerHTML='<i class="fa-solid fa-file-export me-2"></i>Export Members';exportBtn.onclick=function(){exportMembers(team)};liExport.appendChild(exportBtn);menu.appendChild(liExport);
+  
+  var liEdit=document.createElement('li');var editBtn=document.createElement('button');editBtn.type='button';editBtn.className='dropdown-item';editBtn.innerHTML='<i class="fa-solid fa-pen me-2"></i>Edit Team';editBtn.onclick=function(){openEdit(team)};liEdit.appendChild(editBtn);menu.appendChild(liEdit);
+  
+  var liStatus=document.createElement('li');var statusBtn=document.createElement('button');statusBtn.type='button';statusBtn.className='dropdown-item';
+  var isAct = team.status==='active';
+  statusBtn.innerHTML='<i class="fa-solid '+(isAct?'fa-ban':'fa-check')+' me-2"></i>'+(isAct?'Deactivate Team':'Activate Team');
+  statusBtn.onclick=function(){toggleStatus(team)};
+  liStatus.appendChild(statusBtn);
+  menu.appendChild(liStatus);
+
+  var liDel=document.createElement('li');var delBtn=document.createElement('button');delBtn.type='button';delBtn.className='dropdown-item';delBtn.style.color='#dc3545';delBtn.innerHTML='<i class="fa-solid fa-trash me-2"></i>Delete Team';delBtn.onclick=function(){handleDeleteTeam(team.id)};liDel.appendChild(delBtn);menu.appendChild(liDel);
+ 
+   dd.appendChild(trigger);dd.appendChild(menu);actTd.appendChild(dd);
 tr.appendChild(nameTd);tr.appendChild(leadTd);tr.appendChild(memTd);tr.appendChild(projTd);tr.appendChild(dateTd);tr.appendChild(statusTd);tr.appendChild(actTd);body.appendChild(tr)});
 }
 function populateColors(targetId,state){var grid=document.getElementById(targetId);grid.innerHTML='';teamColors.forEach(function(color){var c=document.createElement('button');c.className='color-choice'+(state.color===color?' active':'');c.style.background=color;c.style.width='24px';c.style.height='24px';c.style.borderRadius='9999px';c.style.border='2px solid '+(state.color===color?'#5b2aa7':'transparent');c.style.cursor='pointer';c.onclick=function(){state.color=color;populateColors(targetId,state)};grid.appendChild(c)})}
@@ -454,11 +563,17 @@ function openView(team){
   selectedTeam=team;
   document.getElementById('view-title').innerHTML='<span class="d-flex align-items-center gap-2"><span class="rounded-circle" style="width:12px;height:12px;background:'+team.color+'"></span><span>'+team.name+'</span></span>';
   document.getElementById('view-desc').textContent=team.description||'No description provided.';
-  document.getElementById('view-lead').textContent=team.teamLead;
-  document.getElementById('view-lead-avatar').textContent=initials(team.teamLead);
+  var ld=document.getElementById('view-lead');
+  if(team.teamLead && team.teamLead!=='Unassigned'){
+    ld.textContent=team.teamLead;
+    document.getElementById('view-lead-avatar').textContent=initials(team.teamLead);
+  }else{
+    ld.textContent='Unassigned';
+    document.getElementById('view-lead-avatar').textContent='U';
+  }
   
   var st=document.createElement('span');
-  st.className='badge '+(team.status==='active'?'bg-success':'bg-secondary');
+  st.className='badge '+(team.status==='active'?'bg-success text-white':'bg-secondary text-white');
   st.textContent=team.status;
   var vs=document.getElementById('view-status');vs.innerHTML='';vs.appendChild(st);
   
@@ -489,7 +604,7 @@ function openView(team){
     role.textContent=m.role.replace('_',' ');
     
     var st2=document.createElement('span');
-    st2.className='badge '+(m.status==='active'?'bg-success':'bg-secondary') + ' rounded-pill ms-2';
+    st2.className='badge '+(m.status==='active'?'bg-success text-white':'bg-secondary text-white') + ' rounded-pill ms-2';
     st2.style.width='8px';st2.style.height='8px';st2.style.padding='0';
     st2.title=m.status;
     
@@ -521,7 +636,7 @@ function openView(team){
       var pColor = pPrio==='critical'?'danger':(pPrio==='high'?'warning text-dark':'info text-dark');
       prioBadge = '<span class="badge bg-'+pColor+' me-2">'+(p.priority||'Medium')+'</span>';
       
-      meta.innerHTML = prioBadge + 'Status: ' + (p.status||'Active');
+      meta.innerHTML = prioBadge + 'Status: <span class="badge bg-secondary text-white">' + (p.status||'Active') + '</span>';
       info.appendChild(name);
       info.appendChild(meta);
       
@@ -550,6 +665,52 @@ var ec2=document.getElementById('edit-cancel2');if(ec2){ec2.addEventListener('cl
 document.getElementById('edit-confirm').addEventListener('click',handleEditTeam);
 document.getElementById('view-close').addEventListener('click',closeView);
 var vc2=document.getElementById('view-close2');if(vc2){vc2.addEventListener('click',closeView)}
+function openAssignProject(team){
+  document.getElementById('assign-project-team-id').value = team.id;
+  var el = document.getElementById('assignProjectModal');
+  if (window.bootstrap && el) {
+    window.bootstrap.Modal.getOrCreateInstance(el).show();
+  }
+}
+function emailTeam(team){
+   var emails = [];
+   if (team.members) {
+       emails = team.members.map(function(m){return m.email}).filter(function(e){return e});
+   }
+   if (emails.length > 0) {
+     window.location.href = 'mailto:' + emails.join(',');
+   } else {
+     toast('No members with email addresses found.', 'error');
+   }
+ }
+ function exportMembers(team) {
+   if (!team.members || team.members.length === 0) {
+     toast('No members to export.', 'error');
+     return;
+   }
+   var csv = 'Name,Email,Role,Status\n';
+   team.members.forEach(function(m) {
+     csv += '"' + (m.name || '') + '","' + (m.email || '') + '","' + (m.role || '') + '","' + (m.status || '') + '"\n';
+   });
+   var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+   var link = document.createElement('a');
+   if (link.download !== undefined) {
+     var url = URL.createObjectURL(blob);
+     link.setAttribute('href', url);
+     link.setAttribute('download', 'team_members_' + team.id + '.csv');
+     link.style.visibility = 'hidden';
+     document.body.appendChild(link);
+     link.click();
+     document.body.removeChild(link);
+   }
+ }
+ function toggleStatus(team) {
+   if (confirm('Are you sure you want to ' + (team.status === 'active' ? 'deactivate' : 'activate') + ' this team?')) {
+     document.getElementById('statusTeamId').value = team.id;
+     document.getElementById('statusNewValue').value = (team.status === 'active' ? 'inactive' : 'active');
+     document.getElementById('statusForm').submit();
+   }
+ }
 renderStats();renderTable();
 var createdFlag = <?php echo json_encode(isset($_GET['created'])); ?>;
 var updatedFlag = <?php echo json_encode(isset($_GET['updated'])); ?>;

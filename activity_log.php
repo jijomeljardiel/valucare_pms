@@ -36,7 +36,7 @@ try {
 <div class="container py-4">
   <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
     <div>
-      <h3>Audit Logs</h3>
+      <h3>Activity Logs</h3>
       <p class="text-muted mb-0">Monitor system activities and user actions</p>
     </div>
     <button class="btn btn-primary" onclick="exportLogs()">Export Logs</button>

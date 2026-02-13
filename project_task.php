@@ -17,48 +17,8 @@ $pdo = null;
   }
 
   // Ensure pivot table exists for multi-user assignment
-  if ($pdo) {
-    try {
-      $pdo->exec(
-        "CREATE TABLE IF NOT EXISTS `task_assignees` (
-          `task_id` INT NOT NULL,
-          `user_id` INT NOT NULL,
-          `assigned_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (`task_id`,`user_id`),
-          KEY `idx_task_assignees_user_id` (`user_id`),
-          CONSTRAINT `fk_task_assignees_task` FOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-          CONSTRAINT `fk_task_assignees_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
-      );
-    } catch (Throwable $e) { /* ignore */ }
+  // Database schema checks removed (handled by schema.sql)
 
-    try {
-      $st = $pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects' AND COLUMN_NAME = 'project_manager_id'");
-      $exists = (int)($st ? $st->fetchColumn() : 0);
-      if ($exists === 0) {
-        $pdo->exec("ALTER TABLE `projects` ADD COLUMN `project_manager_id` INT NULL AFTER `due_date`");
-        try { $pdo->exec("ALTER TABLE `projects` ADD KEY `idx_projects_project_manager_id` (`project_manager_id`)"); } catch (Throwable $_) {}
-        try { $pdo->exec("ALTER TABLE `projects` ADD CONSTRAINT `fk_projects_project_manager` FOREIGN KEY (`project_manager_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE"); } catch (Throwable $_) {}
-      }
-    } catch (Throwable $_) {}
-
-    try {
-      $pdo->exec("INSERT IGNORE INTO project_statuses(`key`,`name`,`order_index`,`active`) VALUES
-        ('planning','Planning',0,1),
-        ('active','Active',1,1),
-        ('at-risk','At Risk',2,1),
-        ('on-hold','On Hold',3,1),
-        ('completed','Completed',4,1)");
-    } catch (Throwable $_) {}
-
-    try {
-      $pdo->exec("INSERT IGNORE INTO task_statuses(`key`,`name`,`order_index`,`active`) VALUES
-        ('todo','To Do',0,1),
-        ('in-progress','In Progress',1,1),
-        ('review','In Review',2,1),
-        ('done','Done',3,1)");
-    } catch (Throwable $_) {}
-  }
 
 if (!empty($_SESSION['flash_message'])) {
   $form_message = $_SESSION['flash_message'];
@@ -120,6 +80,7 @@ if (!empty($_SESSION['flash_message'])) {
           }
           $stmt = $pdo->prepare('INSERT INTO tasks (project_id, title, description, category, priority, assignee_id, due_date, task_status_id, parent_task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
           $stmt->execute([$project_id, $title, $description, $category, $priority, $assignee_id, $due_date, $tid, $parent_task_id]);
+          calculateProjectProgress($pdo, $project_id);
           if ($assignee_id) {
             try {
               $stp = $pdo->prepare('SELECT name FROM projects WHERE id = ? LIMIT 1');
@@ -180,13 +141,34 @@ if (!empty($_SESSION['flash_message'])) {
       $task_id = isset($_POST['task_id']) ? (int)$_POST['task_id'] : 0;
       $new_status = $_POST['new_status'] ?? '';
       $allowed = ['todo','in-progress','review','done'];
-      if ($task_id > 0 && in_array($new_status, $allowed, true)) {
+      $curRole = strtolower($_SESSION['role_slug'] ?? ($_SESSION['role'] ?? ''));
+
+      // Check assignment
+      $assignee_id = 0;
+      try {
+          $st_chk = $pdo->prepare('SELECT assignee_id FROM tasks WHERE id = ?');
+          $st_chk->execute([$task_id]);
+          $assignee_id = (int)$st_chk->fetchColumn();
+      } catch(Throwable $_){}
+
+      if (!in_array($curRole, ['admin', 'project_manager'], true) && $assignee_id !== (int)($_SESSION['user_id']??0)) {
+        $form_message = 'Permission denied: Only Managers, Admins, or the Assignee can move tasks.';
+      } elseif ($task_id > 0 && in_array($new_status, $allowed, true)) {
         try {
           $stmt = $pdo->prepare('SELECT id FROM task_statuses WHERE `key` = ? LIMIT 1');
           $stmt->execute([$new_status]);
           $tid = $stmt->fetchColumn() ?: null;
           $stmt = $pdo->prepare('UPDATE tasks SET task_status_id = ? WHERE id = ?');
           $stmt->execute([$tid, $task_id]);
+
+          // Recalculate Project Progress
+          try {
+            $stmt = $pdo->prepare('SELECT project_id FROM tasks WHERE id = ?');
+            $stmt->execute([$task_id]);
+            $pid = $stmt->fetchColumn();
+            if ($pid) calculateProjectProgress($pdo, $pid);
+          } catch (Throwable $_) {}
+
           try {
             $stt = $pdo->prepare('SELECT assignee_id, title, project_id FROM tasks WHERE id = ? LIMIT 1');
             $stt->execute([$task_id]);
@@ -379,11 +361,23 @@ if (!empty($_SESSION['flash_message'])) {
       $statusKey = trim(strtolower($_POST['status'] ?? ''));
       if ($priority === 'normal') { $priority = 'medium'; }
       if ($statusKey === 'completed') { $statusKey = 'done'; }
+      
+      $curRole = strtolower($_SESSION['role_slug'] ?? ($_SESSION['role'] ?? ''));
+      $assignee_id = 0;
+      if ($task_id > 0) {
+          try {
+              $st = $pdo->prepare('SELECT assignee_id FROM tasks WHERE id = ?');
+              $st->execute([$task_id]);
+              $assignee_id = (int)$st->fetchColumn();
+          } catch(Throwable $_){}
+      }
+      $canEdit = in_array($curRole, ['admin', 'project_manager'], true) || ($assignee_id === (int)($_SESSION['user_id']??0));
+
       if ($title === '') {
         $form_message = 'Task title cannot be empty.';
       } elseif ($description === '') {
         $form_message = 'Task description cannot be empty.';
-      } elseif ($task_id > 0) {
+      } elseif ($task_id > 0 && $canEdit) {
         try {
           $tid = null;
           if ($statusKey) {
@@ -397,6 +391,17 @@ if (!empty($_SESSION['flash_message'])) {
           $params[] = $task_id;
           $st2 = $pdo->prepare($sql);
           $st2->execute($params);
+
+          // Recalculate if status changed
+          if ($tid) {
+             try {
+                $st = $pdo->prepare('SELECT project_id FROM tasks WHERE id = ?');
+                $st->execute([$task_id]);
+                $pid = (int)$st->fetchColumn();
+                if ($pid) calculateProjectProgress($pdo, $pid);
+             } catch(Throwable $_){}
+          }
+
           $_SESSION['flash_message'] = 'Task updated.';
           header('Location: project_task.php#pane-kanban');
           exit();
@@ -411,7 +416,11 @@ if (!empty($_SESSION['flash_message'])) {
       $ids = $_POST['assignee_ids'] ?? [];
       $ids = array_values(array_unique(array_map(function($x){ return (int)$x; }, (array)$ids)));
       $primary_id = $ids[0] ?? null;
-      if ($task_id > 0) {
+      
+      $curRole = strtolower($_SESSION['role_slug'] ?? ($_SESSION['role'] ?? ''));
+      $canAssign = in_array($curRole, ['admin', 'project_manager'], true);
+
+      if ($task_id > 0 && $canAssign) {
         try {
           $pdo->prepare('DELETE FROM task_assignees WHERE task_id = ?')->execute([$task_id]);
           foreach ($ids as $uid) {
@@ -472,7 +481,20 @@ if (!empty($_SESSION['flash_message'])) {
       } else { $form_message = 'Invalid task or user.'; }
     } elseif ($action === 'delete_task_asset') {
       $att_id = isset($_POST['attachment_id']) ? (int)$_POST['attachment_id'] : 0;
+      
+      $curRole = strtolower($_SESSION['role_slug'] ?? ($_SESSION['role'] ?? ''));
+      $userId = (int)($_SESSION['user_id']??0);
+      $uploaderId = 0;
       if ($att_id > 0) {
+         try {
+             $st = $pdo->prepare('SELECT uploaded_by FROM attachments WHERE id = ?');
+             $st->execute([$att_id]);
+             $uploaderId = (int)$st->fetchColumn();
+         } catch(Throwable $_){}
+      }
+      $canDelete = in_array($curRole, ['admin', 'project_manager'], true) || ($uploaderId === $userId);
+
+      if ($att_id > 0 && $canDelete) {
         try {
           $pdo->prepare('UPDATE attachments SET deleted_at = NOW() WHERE id = ?')->execute([$att_id]);
           $_SESSION['flash_message'] = 'Asset removed.';
@@ -482,9 +504,32 @@ if (!empty($_SESSION['flash_message'])) {
       } else { $form_message = 'Invalid asset.'; }
     } elseif ($action === 'trash_task') {
       $task_id = isset($_POST['task_id']) ? (int)$_POST['task_id'] : 0;
+      $curRole = strtolower($_SESSION['role_slug'] ?? ($_SESSION['role'] ?? ''));
+      $assignee_id = 0;
       if ($task_id > 0) {
+          try {
+              $st = $pdo->prepare('SELECT assignee_id FROM tasks WHERE id = ?');
+              $st->execute([$task_id]);
+              $assignee_id = (int)$st->fetchColumn();
+          } catch(Throwable $_){}
+      }
+      
+      $canTrash = in_array($curRole, ['admin', 'project_manager'], true) || ($assignee_id === (int)($_SESSION['user_id']??0));
+
+      if ($task_id > 0 && $canTrash) {
         try {
+          // Get project_id for recalculation
+          $pid = 0;
+          try {
+             $st = $pdo->prepare('SELECT project_id FROM tasks WHERE id = ?');
+             $st->execute([$task_id]);
+             $pid = (int)$st->fetchColumn();
+          } catch(Throwable $_){}
+
           $pdo->prepare('UPDATE tasks SET deleted_at = NOW() WHERE id = ?')->execute([$task_id]);
+          
+          if ($pid) calculateProjectProgress($pdo, $pid);
+
           $_SESSION['flash_message'] = 'Task moved to trash.';
           header('Location: project_task.php#pane-kanban');
           exit();
@@ -496,7 +541,18 @@ if (!empty($_SESSION['flash_message'])) {
       if ($role !== 'admin') { $form_message = 'Forbidden.'; }
       elseif ($task_id > 0) {
         try {
+          // Get project_id for recalculation
+          $pid = 0;
+          try {
+             $st = $pdo->prepare('SELECT project_id FROM tasks WHERE id = ?');
+             $st->execute([$task_id]);
+             $pid = (int)$st->fetchColumn();
+          } catch(Throwable $_){}
+
           $pdo->prepare('DELETE FROM tasks WHERE id = ?')->execute([$task_id]);
+          
+          if ($pid) calculateProjectProgress($pdo, $pid);
+
           $_SESSION['flash_message'] = 'Task deleted.';
           header('Location: project_task.php#pane-kanban');
           exit();
@@ -557,7 +613,7 @@ if (!empty($_SESSION['flash_message'])) {
 
   
   try {
-    foreach ($pdo->query("SELECT t.id, t.project_id, t.title, t.description, t.category, t.priority, ts.`key` AS status, t.due_date, p.name AS project_name, CONCAT(COALESCE(a.first_name,''),' ',COALESCE(a.last_name,'')) AS assignee_name, COALESCE(att.asset_count,0) AS asset_count FROM tasks t LEFT JOIN task_statuses ts ON ts.id = t.task_status_id LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users a ON a.id = t.assignee_id LEFT JOIN (SELECT task_id, COUNT(*) AS asset_count FROM attachments WHERE deleted_at IS NULL GROUP BY task_id) att ON att.task_id = t.id WHERE t.deleted_at IS NULL ORDER BY t.id DESC LIMIT 200") as $t) {
+    foreach ($pdo->query("SELECT t.id, t.project_id, t.title, t.description, t.category, t.priority, ts.`key` AS status, t.due_date, t.assignee_id, p.name AS project_name, CONCAT(COALESCE(a.first_name,''),' ',COALESCE(a.last_name,'')) AS assignee_name, COALESCE(att.asset_count,0) AS asset_count FROM tasks t LEFT JOIN task_statuses ts ON ts.id = t.task_status_id LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users a ON a.id = t.assignee_id LEFT JOIN (SELECT task_id, COUNT(*) AS asset_count FROM attachments WHERE deleted_at IS NULL GROUP BY task_id) att ON att.task_id = t.id WHERE t.deleted_at IS NULL ORDER BY t.id DESC LIMIT 200") as $t) {
       $st = strtolower($t['status'] ?? 'todo');
       if (!isset($tasksByStatus[$st])) $st = 'todo';
       $tasksByStatus[$st][] = [
@@ -570,6 +626,7 @@ if (!empty($_SESSION['flash_message'])) {
         'due_date' => $t['due_date'] ?? '',
         'project_name' => $t['project_name'] ?? '',
         'assignee' => trim($t['assignee_name'] ?? '') ?: 'Unassigned',
+        'assignee_id' => (int)($t['assignee_id'] ?? 0),
         'asset_count' => (int)($t['asset_count'] ?? 0),
       ];
     }
@@ -889,10 +946,15 @@ if (!empty($_SESSION['flash_message'])) {
                               <li><button class="dropdown-item text-warning" data-action="request-extension" data-taskid="<?= (int)$t['id'] ?>">Request Extension</button></li>
                             <?php endif; ?>
                             <li><hr class="dropdown-divider"></li>
-                            <?php if ($key !== 'todo'): ?><li><button class="dropdown-item" data-action="move" data-status="todo" data-taskid="<?= (int)$t['id'] ?>">Move to To Do</button></li><?php endif; ?>
-                            <?php if ($key !== 'in-progress'): ?><li><button class="dropdown-item" data-action="move" data-status="in-progress" data-taskid="<?= (int)$t['id'] ?>">Move to In Progress</button></li><?php endif; ?>
-                            <?php if ($key !== 'review'): ?><li><button class="dropdown-item" data-action="move" data-status="review" data-taskid="<?= (int)$t['id'] ?>">Move to Review</button></li><?php endif; ?>
-                            <?php if ($key !== 'done'): ?><li><button class="dropdown-item" data-action="move" data-status="done" data-taskid="<?= (int)$t['id'] ?>">Move to Done</button></li><?php endif; ?>
+                            <?php 
+                            $canMove = in_array($role, ['admin', 'project_manager'], true) || ((int)($t['assignee_id']??0) === (int)($_SESSION['user_id']??0));
+                            if ($canMove): 
+                            ?>
+                              <?php if ($key !== 'todo'): ?><li><button class="dropdown-item" data-action="move" data-status="todo" data-taskid="<?= (int)$t['id'] ?>">Move to To Do</button></li><?php endif; ?>
+                              <?php if ($key !== 'in-progress'): ?><li><button class="dropdown-item" data-action="move" data-status="in-progress" data-taskid="<?= (int)$t['id'] ?>">Move to In Progress</button></li><?php endif; ?>
+                              <?php if ($key !== 'review'): ?><li><button class="dropdown-item" data-action="move" data-status="review" data-taskid="<?= (int)$t['id'] ?>">Move to Review</button></li><?php endif; ?>
+                              <?php if ($key !== 'done'): ?><li><button class="dropdown-item" data-action="move" data-status="done" data-taskid="<?= (int)$t['id'] ?>">Move to Done</button></li><?php endif; ?>
+                            <?php endif; ?>
                           </ul>
                         </div>
                       </div>
@@ -1761,6 +1823,7 @@ if (!empty($_SESSION['flash_message'])) {
       }
       
       function initDnD(){
+        /* Permission check removed to allow assignees to move tasks */
         const items = document.querySelectorAll('.kanban-item');
         const columns = document.querySelectorAll('.kanban-column');
         items.forEach(item => {
@@ -2017,6 +2080,7 @@ if (!empty($_SESSION['flash_message'])) {
 
     // Kanban drag-and-drop to update task status
     (function(){
+      /* Permission check removed to allow assignees to move tasks (server-side enforced) */
       const statusForm = document.getElementById('taskStatusForm');
       const taskIdInput = document.getElementById('taskStatusTaskId');
       const statusInput = document.getElementById('taskStatusNew');
@@ -2130,4 +2194,26 @@ if (!empty($_SESSION['flash_message'])) {
     <input type="hidden" name="request_id" id="extensionRequestId">
     <input type="hidden" name="new_status" id="extensionNewStatus">
   </form>
+  
+<?php
+/**
+ * Helper to recalculate project progress based on tasks.
+ */
+function calculateProjectProgress($pdo, $project_id) {
+    if (!$project_id || !$pdo) return;
+    try {
+        $stmt = $pdo->prepare("SELECT COUNT(*) as total, 
+            SUM(CASE WHEN ts.key = 'done' THEN 1 ELSE 0 END) as completed 
+            FROM tasks t 
+            LEFT JOIN task_statuses ts ON t.task_status_id = ts.id 
+            WHERE t.project_id = ? AND t.deleted_at IS NULL");
+        $stmt->execute([$project_id]);
+        $res = $stmt->fetch();
+        $total = $res ? (int)$res['total'] : 0;
+        $completed = $res ? (int)$res['completed'] : 0;
+        $progress = ($total > 0) ? (int)(($completed / $total) * 100) : 0;
+        $pdo->prepare("UPDATE projects SET progress = ? WHERE id = ?")->execute([$progress, $project_id]);
+    } catch (Throwable $_) {}
+}
+?>
 <?php include 'includes/footer.php'; ?>

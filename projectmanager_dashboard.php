@@ -193,10 +193,16 @@ try {
       ['title'=>'Overdue Tasks','value'=>$overdueTasksCount,'change'=>null,'trend'=>null],
     ],
     'projectStatus' => [
-      ['name'=>'Completed','value'=>$statusMap['Completed'],'color'=>'#22c55e'],
-      ['name'=>'In Progress','value'=>$statusMap['In Progress'],'color'=>'#3b82f6'],
-      ['name'=>'Pending','value'=>$statusMap['Pending'],'color'=>'#f59e0b'],
-      ['name'=>'Blocked','value'=>$statusMap['Blocked'],'color'=>'#ef4444'],
+      ['name'=>'Completed','value'=>$statusMap['Completed'],'color'=>'#06d6a0'],
+      ['name'=>'In Progress','value'=>$statusMap['In Progress'],'color'=>'#118ab2'],
+      ['name'=>'Pending','value'=>$statusMap['Pending'],'color'=>'#ffd166'],
+      ['name'=>'Blocked','value'=>$statusMap['Blocked'],'color'=>'#ef476f'],
+    ],
+    'taskPriority' => [
+      ['name'=>'Critical', 'value'=>$priorityMap['critical'], 'color'=>'#ef476f'],
+      ['name'=>'High', 'value'=>$priorityMap['high'], 'color'=>'#ffd166'],
+      ['name'=>'Medium', 'value'=>$priorityMap['medium'], 'color'=>'#118ab2'],
+      ['name'=>'Low', 'value'=>$priorityMap['low'], 'color'=>'#06d6a0'],
     ],
     'weeklyActivity' => $weeklyActivity,
     'activeProjects' => $activeProjects,
@@ -212,16 +218,16 @@ try {
       ['title'=>'Overdue Tasks','value'=>0,'change'=>null,'trend'=>null],
     ],
     'projectStatus' => [
-      ['name'=>'Completed','value'=>0,'color'=>'#22c55e'],
-      ['name'=>'In Progress','value'=>0,'color'=>'#3b82f6'],
-      ['name'=>'Pending','value'=>0,'color'=>'#f59e0b'],
-      ['name'=>'Blocked','value'=>0,'color'=>'#ef4444'],
+      ['name'=>'Completed','value'=>0,'color'=>'#06d6a0'],
+      ['name'=>'In Progress','value'=>0,'color'=>'#118ab2'],
+      ['name'=>'Pending','value'=>0,'color'=>'#ffd166'],
+      ['name'=>'Blocked','value'=>0,'color'=>'#ef476f'],
     ],
     'taskPriority' => [
-      ['name'=>'Critical', 'value'=>0, 'color'=>'#dc3545'],
-      ['name'=>'High', 'value'=>0, 'color'=>'#fd7e14'],
-      ['name'=>'Medium', 'value'=>0, 'color'=>'#0dcaf0'],
-      ['name'=>'Low', 'value'=>0, 'color'=>'#198754'],
+      ['name'=>'Critical', 'value'=>0, 'color'=>'#ef476f'],
+      ['name'=>'High', 'value'=>0, 'color'=>'#ffd166'],
+      ['name'=>'Medium', 'value'=>0, 'color'=>'#118ab2'],
+      ['name'=>'Low', 'value'=>0, 'color'=>'#06d6a0'],
     ],
     'weeklyActivity' => [
       ['day'=>'Mon','completed'=>0,'created'=>0,'velocity'=>0],
@@ -263,7 +269,7 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
 ?>
 <?php 
   
-  $page_title = 'Dashboard';
+  $page_title = 'Project Manager Dashboard';
   $current_page = basename(__FILE__);
   include 'includes/header.php';
 ?>
@@ -277,7 +283,7 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
   .card-hover:hover { transform: translateY(-6px); box-shadow: 0 12px 30px rgba(15,23,42,0.06); transition: .16s; }
   .avatar { width:36px;height:36px;border-radius:8px;background:#e9ecef;display:flex;align-items:center;justify-content:center;font-weight:700;color:#374151; }
   .progress-small { height:10px; }
-  .left-border-critical { border-left:4px solid #dc3545; }
+  .left-border-critical { border-left:4px solid #ef476f; }
   .dot { display:inline-block;width:10px;height:10px;border-radius:2px; }
   .search-input { max-width:420px; }
   .collapse-toggle { cursor:pointer; }
@@ -355,7 +361,7 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
 
           <div class="mt-3" id="alertsList">
             <?php foreach($adminDashboardData['criticalAlerts'] as $a):
-              $dot = $a['priority'] === 'critical' ? '#dc3545' : ($a['priority'] === 'high' ? '#fd7e14' : '#f59e0b');
+              $dot = $a['priority'] === 'critical' ? '#ef476f' : ($a['priority'] === 'high' ? '#ffd166' : '#ffd166');
             ?>
               <div class="d-flex justify-content-between align-items-center p-3 bg-white rounded mb-2">
                 <div class="d-flex gap-3 align-items-center">
@@ -456,7 +462,7 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
                 <h5 class="mb-0">Weekly Development Activity</h5>
                 <div class="muted">Completed / Created / Velocity</div>
               </div>
-              <canvas id="weeklyChart" style="max-height:240px"></canvas>
+              <canvas id="weeklyChart" style="max-height:300px"></canvas>
             </div>
           </div>
         </div>
@@ -500,7 +506,57 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
     </div>
   </div>
 
-  
+  <?php if ($canManageTeam): ?>
+  <hr class="my-5 border-secondary">
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="card card-hover">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <div>
+              <h5 class="mb-0">Team Management</h5>
+              <div class="muted">Manage roles and status of your team</div>
+            </div>
+            <div>
+              <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMemberModal"><i class="bi bi-person-plus me-1"></i>Add Member</button>
+            </div>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-6">
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input id="teamSearchInput" class="form-control form-control-sm" placeholder="Search by name or email">
+              </div>
+            </div>
+            <div class="col-md-3">
+              <select id="teamRoleFilter" class="form-select form-select-sm">
+                <option value="all">All Roles</option>
+                <option value="project_manager">Project Manager</option>
+                <option value="systemdev">SystemDev</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <select id="teamStatusFilter" class="form-select form-select-sm">
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0" id="teamTable">
+              <thead>
+                <tr class="muted"><th>Member</th><th>Role</th><th>Status</th><th class="text-end">Actions</th></tr>
+              </thead>
+              <tbody id="teamTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <?php endif; ?>
+
 </div>
 
 
@@ -547,8 +603,8 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
       data: {
         labels: days,
         datasets: [
-          { label:'Completed', data:completed, borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,0.2)', tension:0.3, fill:false },
-          { label:'Created', data:created, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.2)', tension:0.3, fill:false },
+          { label:'Completed', data:completed, borderColor:'#06d6a0', backgroundColor:'rgba(6,214,160,0.2)', tension:0.3, fill:false },
+          { label:'Created', data:created, borderColor:'#118ab2', backgroundColor:'rgba(17,138,178,0.2)', tension:0.3, fill:false },
           { label:'Velocity %', data:velocity, borderColor:'#8b5cf6', backgroundColor:'rgba(139,92,246,0.2)', borderDash:[5,5], tension:0.3, fill:false }
         ]
       },
@@ -641,42 +697,52 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
   }
 
   function refreshDashboard(){
-    fetch('dashboard.php?ajax=metrics').then(r=>r.json()).then(applyData).catch(()=>{});
+    fetch('projectmanager_dashboard.php?ajax=metrics').then(r=>r.json()).then(applyData).catch(()=>{});
   }
   setInterval(refreshDashboard, 10000);
 
   // Interactivity: Toggle Alerts
   const alertsCard = document.getElementById('alertsCard');
   const toggleAlertsBtn = document.getElementById('toggleAlertsBtn');
-  toggleAlertsBtn.addEventListener('click', ()=>{
-    const alertsList = document.getElementById('alertsList');
-    if(alertsList.style.display === 'none') { alertsList.style.display = ''; toggleAlertsBtn.classList.remove('btn-primary'); toggleAlertsBtn.classList.add('btn-outline-secondary'); }
-    else { alertsList.style.display = 'none'; toggleAlertsBtn.classList.remove('btn-outline-secondary'); toggleAlertsBtn.classList.add('btn-primary'); }
-  });
+  if(toggleAlertsBtn) {
+    toggleAlertsBtn.addEventListener('click', ()=>{
+      const alertsList = document.getElementById('alertsList');
+      if(alertsList.style.display === 'none') { alertsList.style.display = ''; toggleAlertsBtn.classList.remove('btn-primary'); toggleAlertsBtn.classList.add('btn-outline-secondary'); }
+      else { alertsList.style.display = 'none'; toggleAlertsBtn.classList.remove('btn-outline-secondary'); toggleAlertsBtn.classList.add('btn-primary'); }
+    });
+  }
 
   // Interactivity: Search active projects
   const projectSearch = document.getElementById('projectSearch');
-  projectSearch.addEventListener('input', function(){
-    const q = this.value.trim().toLowerCase();
-    document.querySelectorAll('.project-item').forEach(item=>{
-      const name = item.getAttribute('data-name') || '';
-      item.style.display = (q === '' || name.includes(q)) ? '' : 'none';
+  if(projectSearch) {
+    projectSearch.addEventListener('input', function(){
+      const q = this.value.trim().toLowerCase();
+      document.querySelectorAll('.project-item').forEach(item=>{
+        const name = item.getAttribute('data-name') || '';
+        item.style.display = (q === '' || name.includes(q)) ? '' : 'none';
+      });
     });
-  });
+  }
 
   // Filter: Show High Priority projects only
-  document.getElementById('filterHighBtn').addEventListener('click', ()=>{
-    document.querySelectorAll('.project-item').forEach(item=>{
-      const name = item.querySelector('.fw-medium')?.textContent || '';
-      // find matching project in adminData
-      const proj = adminData.activeProjects.find(p => p.name === name);
-      if(proj) item.style.display = (proj.priority === 'high' || proj.priority === 'critical') ? '' : 'none';
+  const filterHighBtn = document.getElementById('filterHighBtn');
+  if(filterHighBtn) {
+    filterHighBtn.addEventListener('click', ()=>{
+      document.querySelectorAll('.project-item').forEach(item=>{
+        const name = item.querySelector('.fw-medium')?.textContent || '';
+        // find matching project in adminData
+        const proj = adminData.activeProjects.find(p => p.name === name);
+        if(proj) item.style.display = (proj.priority === 'high' || proj.priority === 'critical') ? '' : 'none';
+      });
     });
-  });
-  document.getElementById('showAllBtn').addEventListener('click', ()=>{
-    document.querySelectorAll('.project-item').forEach(item=> item.style.display = '');
-    projectSearch.value = '';
-  });
+  }
+  const showAllBtn = document.getElementById('showAllBtn');
+  if(showAllBtn) {
+    showAllBtn.addEventListener('click', ()=>{
+      document.querySelectorAll('.project-item').forEach(item=> item.style.display = '');
+      if(projectSearch) projectSearch.value = '';
+    });
+  }
 
   document.querySelectorAll('.investigate-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -769,114 +835,23 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
 
   function showToast(msg){
     const toastEl = document.getElementById('actionToast');
-    toastEl.querySelector('.toast-body').textContent = msg || '';
-    const t = new bootstrap.Toast(toastEl);
-    t.show();
+    if(toastEl){
+      toastEl.querySelector('.toast-body').textContent = msg || '';
+      const t = new bootstrap.Toast(toastEl);
+      t.show();
+    }
   }
 
   // Accessibility: ensure charts redraw on resize (Chart.js handles this but keep safe)
   window.addEventListener('resize', ()=> { /* Chart.js auto-resizes */ });
-  
-</script>
-<?php if ($canManageTeam): ?>
-<div class="container-fluid mt-2">
-  <div class="row g-3 mb-4">
-    <div class="col-12">
-      <div class="card card-hover">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <div>
-              <h5 class="mb-0">Team Management</h5>
-              <div class="muted">Manage roles and status of your team</div>
-            </div>
-            <div>
-              <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMemberModal"><i class="bi bi-person-plus me-1"></i>Add Member</button>
-            </div>
-          </div>
-          <div class="row g-2 mb-3">
-            <div class="col-md-6">
-              <div class="input-group">
-                <span class="input-group-text"><i class="bi bi-search"></i></span>
-                <input id="teamSearchInput" class="form-control form-control-sm" placeholder="Search by name or email">
-              </div>
-            </div>
-            <div class="col-md-3">
-              <select id="teamRoleFilter" class="form-select form-select-sm">
-                <option value="all">All Roles</option>
-                <option value="project_manager">Project Manager</option>
-                <option value="systemdev">SystemDev</option>
-              </select>
-            </div>
-            <div class="col-md-3">
-              <select id="teamStatusFilter" class="form-select form-select-sm">
-                <option value="all">All Status</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-          </div>
-          <div class="table-responsive">
-            <table class="table table-sm align-middle mb-0" id="teamTable">
-              <thead>
-                <tr class="muted"><th>Member</th><th>Role</th><th>Status</th><th class="text-end">Actions</th></tr>
-              </thead>
-              <tbody id="teamTableBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
 
-<div class="modal fade" id="addMemberModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
-    <form class="modal-content" method="POST">
-      <div class="modal-header"><h5 class="modal-title">Add Team Member</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-      <div class="modal-body">
-        <input type="hidden" name="action" value="add_member">
-        <div class="mb-2"><label class="form-label">First Name</label><input name="first_name" class="form-control" required></div>
-        <div class="mb-2"><label class="form-label">Last Name</label><input name="last_name" class="form-control"></div>
-        <div class="mb-2"><label class="form-label">Email</label><input name="email" type="email" class="form-control"></div>
-        <div class="mb-2"><label class="form-label">Role</label>
-          <select name="role" class="form-select">
-            <option value="systemdev">SystemDev</option>
-            <option value="project_manager">Project Manager</option>
-          </select>
-        </div>
-      </div>
-      <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-primary" type="submit">Create</button></div>
-    </form>
-  </div>
-</div>
-
-<div class="modal fade" id="editRoleModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
-    <form class="modal-content" method="POST">
-      <div class="modal-header"><h5 class="modal-title">Edit Role</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-      <div class="modal-body">
-        <input type="hidden" name="action" value="update_role">
-        <input type="hidden" id="roleUserId" name="id">
-        <div class="mb-2"><label class="form-label">Role</label>
-          <select id="roleSelect" name="role" class="form-select">
-            <option value="systemdev">SystemDev</option>
-            <option value="project_manager">Project Manager</option>
-          </select>
-        </div>
-      </div>
-      <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-primary" type="submit">Save</button></div>
-    </form>
-  </div>
-</div>
-
-<form id="toggleStatusForm" method="POST" style="display:none"><input type="hidden" name="action" value="toggle_status"><input type="hidden" id="toggleUserId" name="id"></form>
-
-<script>
+  // TEAM MANAGEMENT JS
   const TEAM_DATA = <?= $js_team ?>;
   const teamSearchInput = document.getElementById('teamSearchInput');
   const teamRoleFilter = document.getElementById('teamRoleFilter');
   const teamStatusFilter = document.getElementById('teamStatusFilter');
   const teamTableBody = document.getElementById('teamTableBody');
+  
   function applyTeamFilters(list){
     const q = (teamSearchInput?.value || '').trim().toLowerCase();
     const roleVal = (teamRoleFilter?.value || 'all').toLowerCase();
@@ -893,6 +868,7 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
     });
   }
   function renderTeam(list){
+    if(!teamTableBody) return;
     teamTableBody.innerHTML = '';
     list.forEach(u=>{
       const nm = `${(u.first_name||'')} ${(u.last_name||'')}`.trim() || 'User';
@@ -901,25 +877,34 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
       teamTableBody.appendChild(tr);
     });
   }
-  function rerenderTeam(){ renderTeam(applyTeamFilters(TEAM_DATA)); }
-  [teamSearchInput, teamRoleFilter, teamStatusFilter].forEach(el=>{ if (el){ el.addEventListener('input', rerenderTeam); el.addEventListener('change', rerenderTeam); } });
-  document.addEventListener('click', (e)=>{
-    const btn = e.target.closest('button[data-action]'); if (!btn) return;
-    const id = parseInt(btn.getAttribute('data-id')||'0',10);
-    const action = btn.getAttribute('data-action');
-    if (action === 'edit-role'){
-      document.getElementById('roleUserId').value = String(id);
-      const r = btn.getAttribute('data-role') || 'systemdev';
-      document.getElementById('roleSelect').value = r;
-      const m = new bootstrap.Modal(document.getElementById('editRoleModal')); m.show();
-    } else if (action === 'toggle-status'){
-      document.getElementById('toggleUserId').value = String(id);
-      document.getElementById('toggleStatusForm').submit();
-    }
-  });
-  rerenderTeam();
+
+  if(teamTableBody) {
+    renderTeam(TEAM_DATA);
+    
+    if(teamSearchInput) teamSearchInput.addEventListener('input', ()=>renderTeam(applyTeamFilters(TEAM_DATA)));
+    if(teamRoleFilter) teamRoleFilter.addEventListener('change', ()=>renderTeam(applyTeamFilters(TEAM_DATA)));
+    if(teamStatusFilter) teamStatusFilter.addEventListener('change', ()=>renderTeam(applyTeamFilters(TEAM_DATA)));
+
+    teamTableBody.addEventListener('click', (e)=>{
+      const btn = e.target.closest('button');
+      if(!btn) return;
+      const action = btn.dataset.action;
+      if(action === 'edit-role') {
+        const id = btn.dataset.id;
+        const role = btn.dataset.role;
+        document.getElementById('roleUserId').value = id;
+        document.getElementById('roleSelect').value = role;
+        const m = new bootstrap.Modal(document.getElementById('editRoleModal'));
+        m.show();
+      } else if (action === 'toggle-status') {
+        const id = btn.dataset.id;
+        document.getElementById('toggleUserId').value = id;
+        document.getElementById('toggleStatusForm').submit();
+      }
+    });
+  }
 </script>
-<?php endif; ?>
+
 <div class="modal fade" id="alertModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
@@ -979,6 +964,49 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
     </div>
   </div>
 </div>
+
+<div class="modal fade" id="addMemberModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="POST">
+      <div class="modal-header"><h5 class="modal-title">Add Team Member</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <input type="hidden" name="action" value="add_member">
+        <div class="mb-2"><label class="form-label">First Name</label><input name="first_name" class="form-control" required></div>
+        <div class="mb-2"><label class="form-label">Last Name</label><input name="last_name" class="form-control"></div>
+        <div class="mb-2"><label class="form-label">Email</label><input name="email" type="email" class="form-control"></div>
+        <div class="mb-2"><label class="form-label">Role</label>
+          <select name="role" class="form-select">
+            <option value="systemdev">SystemDev</option>
+            <option value="project_manager">Project Manager</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-primary" type="submit">Create</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="editRoleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="POST">
+      <div class="modal-header"><h5 class="modal-title">Edit Role</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <input type="hidden" name="action" value="update_role">
+        <input type="hidden" id="roleUserId" name="id">
+        <div class="mb-2"><label class="form-label">Role</label>
+          <select id="roleSelect" name="role" class="form-select">
+            <option value="systemdev">SystemDev</option>
+            <option value="project_manager">Project Manager</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-primary" type="submit">Save</button></div>
+    </form>
+  </div>
+</div>
+
+<form id="toggleStatusForm" method="POST" style="display:none"><input type="hidden" name="action" value="toggle_status"><input type="hidden" id="toggleUserId" name="id"></form>
+
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1080;">
   <div id="actionToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
     <div class="d-flex">

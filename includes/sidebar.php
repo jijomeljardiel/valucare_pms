@@ -66,7 +66,7 @@
         </div>
       <?php endif; ?>
       <?php $isProjectManager = ($role === 'project_manager'); $isSystemDev = ($role === 'systemdev'); $isAdmin = ($role === 'admin'); ?>
-      <?php if ($isProjectManager): ?>
+      <?php if ($isProjectManager): ?>  
         <div class="nav-item">
           <?php $isActive = ($current_page === 'projectmanager_dashboard.php'); ?>
           <a href="projectmanager_dashboard.php" class="nav-link <?php echo $isActive ? 'active' : ''; ?>" title="Project Manager Dashboard" data-bs-toggle="tooltip" data-bs-placement="right" aria-current="<?php echo $isActive ? 'page' : 'false'; ?>">

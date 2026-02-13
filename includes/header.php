@@ -133,9 +133,6 @@
         <i class="fas fa-envelope"></i>
         <span class="badge-notification" id="badgeMessages">0</span>
       </a>
-      <a href="settings.php" class="header-action" title="Settings" data-bs-toggle="tooltip" data-bs-placement="bottom" id="headerSettings">
-        <i class="fas fa-cog"></i>
-      </a>
       
       <div class="dropdown">
         <a href="#" class="user-profile dropdown-toggle" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -146,8 +143,6 @@
           </div>
         </a>
         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
-          <li><a class="dropdown-item" href="profile.php"><i class="fas fa-user-circle"></i> My Profile</a></li>
-          <li><a class="dropdown-item" href="settings.php"><i class="fas fa-cog"></i> Settings</a></li>
           <?php $role = strtolower($login_user['role'] ?? ($_SESSION['role'] ?? '')); if ($role === 'admin'): ?>
           <li><a class="dropdown-item" href="activity_log.php"><i class="fas fa-history"></i> Activity Log</a></li>
           <?php endif; ?>
