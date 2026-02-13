@@ -298,32 +298,16 @@
   }, true);
 
   if (kanbanBoard) {
-    kanbanBoard.addEventListener('drop', async (e) => {
-      const col = e.target.closest('.kanban-column');
-      if (!col) return;
-      const newStatus = col.getAttribute('data-status') || '';
-      const id = e.dataTransfer?.getData('text/plain');
-      if (!id || !newStatus || !window.fetch) return;
-      e.preventDefault();
+      // Basic drag and drop support could be added here
+      // For now, the 'Move' buttons are handled by the click listener above
+  }
 
-      const item = kanbanBoard.querySelector(`.kanban-item[data-id="${id}"]`);
-      try {
-        const form = document.getElementById('taskStatusForm');
-        const idInput = document.getElementById('taskStatusTaskId');
-        const statusInput = document.getElementById('taskStatusNew');
-        if (!form || !idInput || !statusInput) return;
-        idInput.value = String(parseInt(id, 10));
-        statusInput.value = String(newStatus);
-        form.submit();
-      } catch (err) {
-        alert('Failed to update status. Please try again.');
-      }
-    }, true);
-  }
-  };
-  if (document.readyState !== 'loading') {
-    initApp();
-  } else {
+  }; // end initApp
+
+  if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
   }
+
 })();

@@ -3,6 +3,7 @@ require_once 'includes/auth_guard.php';
 require_once 'config/database.php';
 date_default_timezone_set('Asia/Manila');
 $role = strtolower($_SESSION['role_slug'] ?? ($_SESSION['role'] ?? ($_SESSION['login_user']['role'] ?? '')));
+if ($role === 'manager') { $role = 'project_manager'; }
 $userId = (int)($_SESSION['user_id'] ?? ($_SESSION['login_user']['id'] ?? 0));
 if (!in_array($role, ['project_manager','admin'], true)) { http_response_code(403); echo 'Forbidden'; exit; }
 $pdo = null;
@@ -16,6 +17,7 @@ if ($pdo) {
       `name` VARCHAR(200) NOT NULL,
       `description` TEXT NULL,
       `created_by` INT NULL,
+      `color` VARCHAR(20) NULL DEFAULT '#3b82f6',
       `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (`id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
@@ -27,6 +29,15 @@ if ($pdo) {
       PRIMARY KEY (`team_id`,`user_id`),
       KEY `idx_team_members_user_id` (`user_id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    // Migration: Add color column if missing
+    try {
+      $cols = $pdo->query("DESCRIBE teams")->fetchAll(PDO::FETCH_COLUMN);
+      if (!in_array('color', $cols)) {
+        $pdo->exec("ALTER TABLE teams ADD COLUMN color VARCHAR(20) NULL DEFAULT '#3b82f6'");
+      }
+    } catch (Throwable $e) { /* ignore */ }
+
   } catch (Throwable $e) { /* ignore */ }
   try {
     $qLeads = $pdo->query("SELECT id, CONCAT_WS(' ', first_name, last_name) AS name, email, role, department FROM users WHERE role IN ('project_manager','admin') ORDER BY name ASC");
@@ -84,8 +95,8 @@ if ($pdo && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($updateTeamId > 0 && $name !== '') {
       try {
         $pdo->beginTransaction();
-        $u = $pdo->prepare('UPDATE teams SET name = ?, description = ? WHERE id = ?');
-        $u->execute([$name, $description, $updateTeamId]);
+        $u = $pdo->prepare('UPDATE teams SET name = ?, description = ?, color = ? WHERE id = ?');
+        $u->execute([$name, $description, $color, $updateTeamId]);
         $clr = $color;
         $pdo->prepare('DELETE FROM team_members WHERE team_id = ?')->execute([$updateTeamId]);
         $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)')->execute([$updateTeamId, $projectManagerId, 'lead']);
@@ -115,8 +126,8 @@ if ($pdo && $_SERVER['REQUEST_METHOD'] === 'POST') {
   if ($name !== '') {
     try {
       $pdo->beginTransaction();
-      $st = $pdo->prepare('INSERT INTO teams (name, description, created_by) VALUES (?, ?, ?)');
-      $st->execute([$name, $description, $userId]);
+      $st = $pdo->prepare('INSERT INTO teams (name, description, created_by, color) VALUES (?, ?, ?, ?)');
+      $st->execute([$name, $description, $userId, $color ?: '#3b82f6']);
       $teamId = (int)$pdo->lastInsertId();
       $st2 = $pdo->prepare('INSERT IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)');
       $st2->execute([$teamId, $projectManagerId, 'lead']);
@@ -157,9 +168,11 @@ function initials_from_name($name){$parts=preg_split('/\s+/', (string)$name);$a=
 $teamsData = [];
 if ($pdo) {
   try {
-    $qTeams = $pdo->query('SELECT id, name, description, created_at FROM teams ORDER BY id DESC');
+    $qTeams = $pdo->query('SELECT id, name, description, created_at, color FROM teams ORDER BY id DESC');
     $leadStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email, u.role FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role = 'lead' LIMIT 1");
-    $memberStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email, u.role FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role <> 'lead' ORDER BY u.last_name, u.first_name");
+    $memberStmt = $pdo->prepare("SELECT u.id, CONCAT_WS(' ', u.first_name, u.last_name) AS name, u.email, u.role, u.status FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ? AND tm.role <> 'lead' ORDER BY u.last_name, u.first_name");
+    $projStmt = $pdo->prepare("SELECT p.id, p.name, ps.`key` AS status, p.priority FROM projects p JOIN project_statuses ps ON ps.id = p.project_status_id WHERE p.team_id = ?");
+    
     foreach ($qTeams as $t) {
       $leadStmt->execute([$t['id']]);
       $lead = $leadStmt->fetch(PDO::FETCH_ASSOC);
@@ -183,21 +196,33 @@ if ($pdo) {
           'email' => (string)($m['email'] ?? ''),
           'role' => (string)($m['role'] ?? ''),
           'avatar' => initials_from_name($m['name']),
-          'status' => 'active',
+          'status' => (string)($m['status'] ?? 'active'),
         ];
       }
+      $projStmt->execute([$t['id']]);
+      $projRows = $projStmt->fetchAll(PDO::FETCH_ASSOC);
+      $projOut = [];
+      foreach ($projRows as $p) {
+        $projOut[] = [
+          'id' => (string)$p['id'],
+          'name' => (string)$p['name'],
+          'status' => (string)$p['status'],
+          'priority' => (string)$p['priority']
+        ];
+      }
+
       $createdRaw = $t['created_at'] ?? ($t['created_on'] ?? null);
       $createdDate = $createdRaw ? date('Y-m-d', strtotime($createdRaw)) : date('Y-m-d');
       $teamsData[] = [
         'id' => (string)$t['id'],
         'name' => (string)$t['name'],
         'description' => (string)($t['description'] ?? ''),
-        'teamLead' => $lead ? (string)$lead['name'] : '',
+        'teamLead' => $lead ? (string)$lead['name'] : 'Unassigned',
         'members' => $membersOut,
-        'projects' => [],
+        'projects' => $projOut,
         'createdDate' => $createdDate,
         'status' => 'active',
-        'color' => '#3b82f6',
+        'color' => $t['color'] ?? '#3b82f6',
       ];
     }
   } catch (Exception $e) { $teamsData = []; }
@@ -218,9 +243,11 @@ if ($pdo) {
   <?php if (!$pdo): ?>
     <div class="alert alert-danger">Database connection is unavailable.</div>
   <?php endif; ?>
-  
+  <?php if ($message): ?>
+    <div class="alert alert-info"><?= htmlspecialchars($message) ?></div>
+  <?php endif; ?>
 
-  <div class="row g-3" id="stats"></div>
+  <div class="row g-3 mb-4" id="stats"></div>
 
   <div class="mb-3">
     <div class="input-group">
@@ -318,44 +345,59 @@ if ($pdo) {
   </div>
 
   <div class="modal fade" id="viewModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content" id="view-modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="view-title"></h5>
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-header bg-light border-bottom-0">
+          <h5 class="modal-title fw-bold" id="view-title"></h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
-        <div class="modal-body">
-          <div class="mutelist">
-            <div>
-              <div class="label">Project Manager</div>
-              <div id="view-lead"></div>
+        <div class="modal-body p-4">
+          <!-- Team Header Info -->
+          <div class="row g-4 mb-4">
+            <div class="col-md-6">
+              <div class="text-uppercase text-muted small fw-bold mb-1">Project Manager</div>
+              <div class="d-flex align-items-center gap-2">
+                <div class="avatar avatar-sm bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" style="width:32px;height:32px" id="view-lead-avatar"></div>
+                <div class="fw-medium" id="view-lead"></div>
+              </div>
             </div>
-            <div>
-              <div class="label">Status</div>
-              <div class="status" id="view-status"></div>
+            <div class="col-md-3">
+              <div class="text-uppercase text-muted small fw-bold mb-1">Status</div>
+              <div id="view-status"></div>
             </div>
-            <div>
-              <div class="label">Created Date</div>
-              <div id="view-date"></div>
-            </div>
-            <div>
-              <div class="label">Total Members</div>
-              <div id="view-total"></div>
+            <div class="col-md-3">
+              <div class="text-uppercase text-muted small fw-bold mb-1">Created</div>
+              <div class="fw-medium" id="view-date"></div>
             </div>
           </div>
-          <div class="separator"></div>
-          <div>
-            <div class="label" id="view-members-label"></div>
-            <div id="view-members"></div>
+
+          <div class="mb-4">
+            <div class="text-uppercase text-muted small fw-bold mb-1">Description</div>
+            <p class="text-secondary mb-0" id="view-desc"></p>
           </div>
-          <div class="separator" id="projects-sep" style="display:none"></div>
+
+          <hr class="my-4 opacity-10">
+
+          <!-- Members Section -->
+          <div class="mb-4">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+              <h6 class="fw-bold mb-0 text-primary">Team Members</h6>
+              <span class="badge bg-light text-dark border" id="view-total"></span>
+            </div>
+            <div id="view-members" class="d-flex flex-column gap-2"></div>
+          </div>
+
+          <!-- Projects Section -->
           <div id="view-projects-wrap" style="display:none">
-            <div class="label" id="view-projects-label"></div>
-            <div id="view-projects"></div>
+            <div class="d-flex align-items-center justify-content-between mb-3">
+              <h6 class="fw-bold mb-0 text-primary">Assigned Projects</h6>
+              <span class="badge bg-light text-dark border" id="view-projects-count"></span>
+            </div>
+            <div id="view-projects" class="d-flex flex-column gap-2"></div>
           </div>
         </div>
-        <div class="modal-footer">
-          <button class="btn btn-outline" id="view-close" type="button" data-bs-dismiss="modal">Close</button>
+        <div class="modal-footer border-top-0 bg-light">
+          <button class="btn btn-secondary px-4" id="view-close" type="button" data-bs-dismiss="modal">Close</button>
         </div>
       </div>
     </div>
@@ -408,7 +450,96 @@ function openEdit(team){editState.id=team.id;editState.name=team.name;editState.
 function closeEdit(){var el=document.getElementById('editModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).hide()}}
 function handleEditTeam(){var name=document.getElementById('edit-team-name').value.trim();var desc=document.getElementById('edit-team-description').value.trim();editState.name=name;editState.description=desc;if(!name){toast('Please enter a team name','error');return}if(!editState.lead){toast('Please select a project manager','error');return}if(editState.members.length===0){toast('Please select at least one team member','error');return}var editMemberIdsWrap=document.getElementById('editMemberIdsWrap');editMemberIdsWrap.innerHTML='';editState.members.forEach(function(id){var input=document.createElement('input');input.type='hidden';input.name='member_ids[]';input.value=id;editMemberIdsWrap.appendChild(input)});document.getElementById('editColorInput').value=editState.color;document.getElementById('editProjectManagerInput').value=editState.lead;document.getElementById('editTeamIdInput').value=editState.id;document.getElementById('editNameInput').value=name;document.getElementById('editDescInput').value=desc;document.getElementById('editForm').submit()}
 function handleDeleteTeam(id){if(!confirm('Are you sure you want to delete this team?')){return}document.getElementById('deleteTeamId').value=id;document.getElementById('deleteForm').submit()}
-function openView(team){selectedTeam=team;document.getElementById('view-title').innerHTML='<span style="display:inline-flex;align-items:center;gap:8px"><span style="width:14px;height:14px;border-radius:999px;background:'+team.color+';display:inline-block"></span>'+team.name+'</span>';document.getElementById('view-desc').textContent=team.description||'';document.getElementById('view-lead').textContent=team.teamLead;var st=document.createElement('span');st.className='badge '+(team.status==='active'?'badge-default':'badge-secondary');st.textContent=team.status;var vs=document.getElementById('view-status');vs.innerHTML='';vs.appendChild(st);document.getElementById('view-date').textContent=(new Date(team.createdDate)).toLocaleDateString();document.getElementById('view-total').textContent=team.members.length;document.getElementById('view-members-label').textContent='Team Members ('+team.members.length+')';var vm=document.getElementById('view-members');vm.innerHTML='';team.members.forEach(function(m){var row=document.createElement('div');row.className='row';row.style.border='1px solid #1f2937';row.style.borderRadius='8px';var av=document.createElement('div');av.className='avatar';av.style.width='36px';av.style.height='36px';av.textContent=m.avatar;var info=document.createElement('div');var name=document.createElement('div');name.textContent=m.name;var email=document.createElement('div');email.className='email';email.textContent=m.email;info.appendChild(name);info.appendChild(email);var role=document.createElement('span');role.className='badge';role.textContent=m.role.replace('_',' ');var st2=document.createElement('span');st2.className='badge '+(m.status==='active'?'badge-default':'badge-secondary');st2.textContent=m.status;row.appendChild(av);row.appendChild(info);row.appendChild(role);row.appendChild(st2);vm.appendChild(row)});var wrap=document.getElementById('view-projects-wrap');var sep=document.getElementById('projects-sep');var label=document.getElementById('view-projects-label');var vp=document.getElementById('view-projects');if(team.projects.length>0){wrap.style.display='block';sep.style.display='block';label.textContent='Assigned Projects ('+team.projects.length+')';vp.innerHTML='';team.projects.forEach(function(p){var pr=document.createElement('div');pr.className='project';var ic=document.createElement('i');ic.className='fa-solid fa-circle-check me-2 text-primary';var txt=document.createElement('span');txt.textContent=p;pr.appendChild(ic);pr.appendChild(txt);vp.appendChild(pr)})}else{wrap.style.display='none';sep.style.display='none'}var el=document.getElementById('viewModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}}
+function openView(team){
+  selectedTeam=team;
+  document.getElementById('view-title').innerHTML='<span class="d-flex align-items-center gap-2"><span class="rounded-circle" style="width:12px;height:12px;background:'+team.color+'"></span><span>'+team.name+'</span></span>';
+  document.getElementById('view-desc').textContent=team.description||'No description provided.';
+  document.getElementById('view-lead').textContent=team.teamLead;
+  document.getElementById('view-lead-avatar').textContent=initials(team.teamLead);
+  
+  var st=document.createElement('span');
+  st.className='badge '+(team.status==='active'?'bg-success':'bg-secondary');
+  st.textContent=team.status;
+  var vs=document.getElementById('view-status');vs.innerHTML='';vs.appendChild(st);
+  
+  document.getElementById('view-date').textContent=(new Date(team.createdDate)).toLocaleDateString();
+  document.getElementById('view-total').textContent=team.members.length + ' Members';
+  
+  var vm=document.getElementById('view-members');vm.innerHTML='';
+  team.members.forEach(function(m){
+    var row=document.createElement('div');
+    row.className='d-flex align-items-center gap-3 p-2 border rounded bg-white hover-shadow-sm transition-all';
+    
+    var av=document.createElement('div');
+    av.className='avatar bg-light text-primary rounded-circle d-flex align-items-center justify-content-center fw-bold border';
+    av.style.width='36px';av.style.height='36px';av.style.fontSize='12px';
+    av.textContent=m.avatar;
+    
+    var info=document.createElement('div');
+    info.className='flex-grow-1';
+    var name=document.createElement('div');
+    name.innerHTML='<a href="profile.php?target_id='+m.id+'" class="text-decoration-none text-dark fw-semibold stretched-link">'+m.name+'</a>';
+    var email=document.createElement('div');
+    email.className='text-muted small';
+    email.textContent=m.email;
+    info.appendChild(name);info.appendChild(email);
+    
+    var role=document.createElement('span');
+    role.className='badge bg-light text-secondary border';
+    role.textContent=m.role.replace('_',' ');
+    
+    var st2=document.createElement('span');
+    st2.className='badge '+(m.status==='active'?'bg-success':'bg-secondary') + ' rounded-pill ms-2';
+    st2.style.width='8px';st2.style.height='8px';st2.style.padding='0';
+    st2.title=m.status;
+    
+    row.appendChild(av);row.appendChild(info);row.appendChild(role);row.appendChild(st2);
+    vm.appendChild(row);
+  });
+  
+  var pw=document.getElementById('view-projects-wrap');
+  var pc=document.getElementById('view-projects-count');
+  var pv=document.getElementById('view-projects');
+  
+  if (team.projects && team.projects.length > 0) {
+    pw.style.display='block';
+    pc.textContent = team.projects.length + ' Projects';
+    pv.innerHTML = '';
+    team.projects.forEach(function(p){
+      var row = document.createElement('div');
+      row.className = 'd-flex align-items-center justify-content-between p-3 border rounded bg-white hover-shadow-sm transition-all';
+      
+      var info = document.createElement('div');
+      var name = document.createElement('div');
+      name.innerHTML = '<a href="project_task.php?project_id='+p.id+'" class="text-decoration-none text-primary fw-semibold stretched-link"><i class="fa-solid fa-folder-open me-2"></i>'+p.name+'</a>';
+      var meta = document.createElement('div');
+      meta.className = 'text-muted small mt-1';
+      
+      // Priority Badge
+      var prioBadge = '';
+      var pPrio = (p.priority||'medium').toLowerCase();
+      var pColor = pPrio==='critical'?'danger':(pPrio==='high'?'warning text-dark':'info text-dark');
+      prioBadge = '<span class="badge bg-'+pColor+' me-2">'+(p.priority||'Medium')+'</span>';
+      
+      meta.innerHTML = prioBadge + 'Status: ' + (p.status||'Active');
+      info.appendChild(name);
+      info.appendChild(meta);
+      
+      var action = document.createElement('div');
+      action.innerHTML = '<i class="fa-solid fa-chevron-right text-muted"></i>';
+      
+      row.appendChild(info);
+      row.appendChild(action);
+      pv.appendChild(row);
+    });
+  } else {
+    pw.style.display='none';
+    pv.innerHTML = '';
+  }
+  
+  var el=document.getElementById('viewModal');
+  if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).show()}
+}
 function closeView(){var el=document.getElementById('viewModal');if(window.bootstrap&&el){window.bootstrap.Modal.getOrCreateInstance(el).hide()}}
 document.getElementById('search').addEventListener('input',function(e){searchQuery=e.target.value;renderTable()});
 document.getElementById('create-cancel').addEventListener('click',closeCreate);

@@ -24,7 +24,7 @@ if ($pdo && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : '';
     if ($first !== '' && ($email !== '' || $last !== '')) {
       $username = $email !== '' ? explode('@', $email)[0] : (strtolower(preg_replace('/\s+/', '', ($first.$last))) ?: ('user'.time()));
-      $password = password_hash('changeme', PASSWORD_DEFAULT);
+      $password = 'changeme';
       try {
         $st = $pdo->prepare('INSERT INTO users (username, email, password, first_name, last_name, role, department, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
         $st->execute([$username, $email, $password, $first, $last, $r, 'ICT', 'active']);

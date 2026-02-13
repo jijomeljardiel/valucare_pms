@@ -31,9 +31,9 @@
   $current_page = strtolower(basename($_SERVER['PHP_SELF']));
   $role_raw = strtolower($login_user['role'] ?? ($_SESSION['role'] ?? 'guest'));
   $role_slug = strtolower($_SESSION['role_slug'] ?? '');
-  if ($role_slug === '') {
+  if ($role_slug === '' || $role_slug === 'manager') {
     $r = str_replace([' ', '-', 'system dev', 'system_dev'], ['_', '_', 'systemdev', 'systemdev'], $role_raw);
-    if ($r === 'teamlead' || $r === 'team_lead') { $r = 'project_manager'; }
+    if ($r === 'teamlead' || $r === 'team_lead' || $r === 'manager') { $r = 'project_manager'; }
     $role_slug = $r;
   }
   $role = $role_slug;
@@ -71,7 +71,7 @@
           <?php $isActive = ($current_page === 'projectmanager_dashboard.php'); ?>
           <a href="projectmanager_dashboard.php" class="nav-link <?php echo $isActive ? 'active' : ''; ?>" title="Project Manager Dashboard" data-bs-toggle="tooltip" data-bs-placement="right" aria-current="<?php echo $isActive ? 'page' : 'false'; ?>">
             <span class="nav-icon"><i class="fas fa-gauge"></i></span>
-            <span>Dashboard</span>
+            <span>Manager Dashboard</span>
           </a>
         </div>
         <div class="nav-item">
@@ -133,15 +133,15 @@
             <span>Team Collaboration</span>
           </a>
         </div>
-        
+        <div class="nav-item">
+          <?php $isActive = ($current_page === 'team_management.php'); ?>
+          <a href="team_management.php" class="nav-link <?php echo $isActive ? 'active' : ''; ?>" title="Team Management" data-bs-toggle="tooltip" data-bs-placement="right" aria-current="<?php echo $isActive ? 'page' : 'false'; ?>">
+            <span class="nav-icon"><i class="fas fa-users-cog"></i></span>
+            <span>Team Management</span>
+          </a>
+        </div>
       <?php endif; ?>
-      <div class="nav-item">
-        <?php $isActive = ($current_page === 'profile.php'); ?>
-        <a href="profile.php" class="nav-link <?php echo $isActive ? 'active' : ''; ?>" title="My Profile" data-bs-toggle="tooltip" data-bs-placement="right" aria-current="<?php echo $isActive ? 'page' : 'false'; ?>">
-          <span class="nav-icon"><i class="fas fa-user-circle"></i></span>
-          <span>My Profile</span>
-        </a>
-      </div>
+
     </nav>
   </div>
 

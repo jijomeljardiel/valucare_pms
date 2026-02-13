@@ -69,6 +69,15 @@ try {
     else $statusMap['Pending'] += $cnt;
   }
 
+  $priorityRows = [];
+  try { $priorityRows = $pdo->query("SELECT priority, COUNT(*) AS cnt FROM tasks GROUP BY priority")->fetchAll(); } catch (Throwable $e) { $priorityRows = []; }
+  $priorityMap = ['critical'=>0, 'high'=>0, 'medium'=>0, 'low'=>0];
+  foreach ($priorityRows as $row) {
+    $p = strtolower($row['priority'] ?? 'medium');
+    if (isset($priorityMap[$p])) $priorityMap[$p] += (int)$row['cnt'];
+    else $priorityMap['medium'] += (int)$row['cnt'];
+  }
+
   
   $projRows = [];
   try { $projRows = $pdo->query("SELECT p.id, p.name, ps.`key` AS status, p.progress, p.due_date, p.priority FROM projects p JOIN project_statuses ps ON ps.id = p.project_status_id ORDER BY p.id DESC LIMIT 12")->fetchAll(); } catch (Throwable $e) { $projRows = []; }
@@ -143,6 +152,12 @@ try {
       ['name'=>'Pending','value'=>$statusMap['Pending'],'color'=>'#f59e0b'],
       ['name'=>'Blocked','value'=>$statusMap['Blocked'],'color'=>'#ef4444'],
     ],
+    'taskPriority' => [
+      ['name'=>'Critical', 'value'=>$priorityMap['critical'], 'color'=>'#dc3545'],
+      ['name'=>'High', 'value'=>$priorityMap['high'], 'color'=>'#fd7e14'],
+      ['name'=>'Medium', 'value'=>$priorityMap['medium'], 'color'=>'#0dcaf0'],
+      ['name'=>'Low', 'value'=>$priorityMap['low'], 'color'=>'#198754'],
+    ],
     'weeklyActivity' => $weeklyActivity,
     'activeProjects' => $activeProjects,
     'criticalAlerts' => $criticalAlerts,
@@ -161,6 +176,12 @@ try {
       ['name'=>'In Progress','value'=>0,'color'=>'#3b82f6'],
       ['name'=>'Pending','value'=>0,'color'=>'#f59e0b'],
       ['name'=>'Blocked','value'=>0,'color'=>'#ef4444'],
+    ],
+    'taskPriority' => [
+      ['name'=>'Critical', 'value'=>0, 'color'=>'#dc3545'],
+      ['name'=>'High', 'value'=>0, 'color'=>'#fd7e14'],
+      ['name'=>'Medium', 'value'=>0, 'color'=>'#0dcaf0'],
+      ['name'=>'Low', 'value'=>0, 'color'=>'#198754'],
     ],
     'weeklyActivity' => [
       ['day'=>'Mon','completed'=>0,'created'=>0,'velocity'=>0],
@@ -357,13 +378,28 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
 
     
     <div class="col-lg-6">
-      <div class="card card-hover mb-3">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="mb-0">Task Status Distribution</h5>
-            <div class="muted">Overview</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="card card-hover mb-3 h-100">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0">Task Status</h5>
+                <div class="muted">Overview</div>
+              </div>
+              <canvas id="statusPie" style="max-height:200px"></canvas>
+            </div>
           </div>
-          <canvas id="statusPie" style="max-height:260px"></canvas>
+        </div>
+        <div class="col-md-6">
+          <div class="card card-hover mb-3 h-100">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0">Task Priority</h5>
+                <div class="muted">By Level</div>
+              </div>
+              <canvas id="priorityBar" style="max-height:200px"></canvas>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -437,6 +473,19 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
     });
   })();
 
+  let priorityBarChart = null;
+  (function renderPriorityBar(){
+    const ctx = document.getElementById('priorityBar').getContext('2d');
+    const labels = adminData.taskPriority.map(s=>s.name);
+    const data = adminData.taskPriority.map(s=>s.value);
+    const colors = adminData.taskPriority.map(s=>s.color);
+    priorityBarChart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets: [{ label:'Tasks', data, backgroundColor: colors, borderRadius:4 }] },
+      options: { plugins: { legend: { display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 } } }, responsive:true, maintainAspectRatio:false }
+    });
+  })();
+
   let weeklyChartInstance = null;
   (function renderWeekly(){
     const ctx = document.getElementById('weeklyChart').getContext('2d');
@@ -480,6 +529,12 @@ $js_admin = json_encode($adminDashboardData, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX
       statusPieChart.data.datasets[0].data = vals;
       statusPieChart.data.datasets[0].backgroundColor = colors;
       statusPieChart.update();
+    }
+    if (priorityBarChart) {
+      priorityBarChart.data.labels = (data.taskPriority||[]).map(s=>s.name);
+      priorityBarChart.data.datasets[0].data = (data.taskPriority||[]).map(s=>s.value);
+      priorityBarChart.data.datasets[0].backgroundColor = (data.taskPriority||[]).map(s=>s.color);
+      priorityBarChart.update();
     }
     const days = (data.weeklyActivity||[]).map(r=>r.day);
     const completed = (data.weeklyActivity||[]).map(r=>r.completed);

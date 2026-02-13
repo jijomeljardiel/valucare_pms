@@ -7,13 +7,13 @@ require_once 'includes/activity_logger.php';
 function normalize_role($role){
     $r = strtolower(trim((string)$role));
     $r = str_replace([' ', '-', 'system dev', 'system_dev'], ['_', '_', 'systemdev', 'systemdev'], $r);
-    if ($r === 'teamlead' || $r === 'team_lead' || $r === 'team lead' || $r === 'team-lead') $r = 'project_manager';
+    if ($r === 'teamlead' || $r === 'team_lead' || $r === 'team lead' || $r === 'team-lead' || $r === 'manager') $r = 'project_manager';
     return $r;
 }
 function role_landing($role) {
     $r = normalize_role($role ?? '');
     if ($r === 'project_manager') return 'projectmanager_dashboard.php';
-    if ($r === 'systemdev') return 'dashboard.php';
+    if ($r === 'systemdev') return 'systemdev_dashboard.php';
     if ($r === 'admin') return 'dashboard.php';
     return 'dashboard.php';
 }

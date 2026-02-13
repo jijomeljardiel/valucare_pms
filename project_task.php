@@ -379,7 +379,11 @@ if (!empty($_SESSION['flash_message'])) {
       $statusKey = trim(strtolower($_POST['status'] ?? ''));
       if ($priority === 'normal') { $priority = 'medium'; }
       if ($statusKey === 'completed') { $statusKey = 'done'; }
-      if ($task_id > 0) {
+      if ($title === '') {
+        $form_message = 'Task title cannot be empty.';
+      } elseif ($description === '') {
+        $form_message = 'Task description cannot be empty.';
+      } elseif ($task_id > 0) {
         try {
           $tid = null;
           if ($statusKey) {
@@ -970,7 +974,7 @@ if (!empty($_SESSION['flash_message'])) {
   
   <div class="modal fade" id="newProjectModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
-      <form id="newProjectForm" class="modal-content" method="POST">
+      <form id="newProjectForm" class="modal-content" method="POST" action="project_task.php">
         <div class="modal-header">
           <div>
             <h5 class="modal-title mb-0">Create New Project</h5>
@@ -1100,7 +1104,7 @@ if (!empty($_SESSION['flash_message'])) {
 
   <div class="modal fade" id="editTaskModal" tabindex="-1">
     <div class="modal-dialog">
-      <form id="editTaskForm" class="modal-content" method="POST">
+      <form id="editTaskForm" class="modal-content" method="POST" action="project_task.php">
         <div class="modal-header">
           <h5 class="modal-title">Edit Task</h5>
           <button class="btn-close" data-bs-dismiss="modal"></button>
@@ -1142,7 +1146,7 @@ if (!empty($_SESSION['flash_message'])) {
 
   <div class="modal fade" id="assignUsersModal" tabindex="-1">
     <div class="modal-dialog">
-      <form id="assignUsersForm" class="modal-content" method="POST">
+      <form id="assignUsersForm" class="modal-content" method="POST" action="project_task.php">
         <div class="modal-header">
           <h5 class="modal-title">Assign Users</h5>
           <button class="btn-close" data-bs-dismiss="modal"></button>
@@ -1174,7 +1178,7 @@ if (!empty($_SESSION['flash_message'])) {
 
   <div class="modal fade" id="assignTeamModal" tabindex="-1">
     <div class="modal-dialog">
-      <form id="assignTeamForm" class="modal-content" method="POST">
+      <form id="assignTeamForm" class="modal-content" method="POST" action="project_task.php">
         <div class="modal-header"><h5 class="modal-title">Assign Team to Project</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
         <div class="modal-body ui-modal-body">
           <input type="hidden" name="project_id" id="assignTeamProjectId">
@@ -1203,7 +1207,7 @@ if (!empty($_SESSION['flash_message'])) {
 
   <div class="modal fade" id="uploadAssetModal" tabindex="-1">
     <div class="modal-dialog">
-      <form id="uploadAssetForm" class="modal-content" method="POST" enctype="multipart/form-data">
+      <form id="uploadAssetForm" class="modal-content" method="POST" enctype="multipart/form-data" action="project_task.php">
         <div class="modal-header">
           <h5 class="modal-title">Upload Asset</h5>
           <button class="btn-close" data-bs-dismiss="modal"></button>
@@ -1249,7 +1253,7 @@ if (!empty($_SESSION['flash_message'])) {
                   foreach ($rows as $u) {
                     $nm = trim(($u['first_name'] ?? '').' '.($u['last_name'] ?? '')) ?: 'User';
                     $st = strtolower($u['status'] ?? 'active');
-                    echo '<div class="list-group-item d-flex justify-content-between align-items-center"><div><div class="fw-medium">'.htmlspecialchars($nm).'</div><small class="text-muted">'.htmlspecialchars($u['email'] ?? '').'</small></div><div class="btn-group"><form method="POST" class="d-inline"><input type="hidden" name="action" value="update_user_status"><input type="hidden" name="user_id" value="'.(int)$u['id'].'"><input type="hidden" name="status" value="'.($st==='active'?'inactive':'active').'"><button class="btn btn-sm '.($st==='active'?'btn-outline-danger':'btn-outline-success').'">'.($st==='active'?'Disable':'Activate').'</button></form></div></div>';
+                    echo '<div class="list-group-item d-flex justify-content-between align-items-center"><div><div class="fw-medium">'.htmlspecialchars($nm).'</div><small class="text-muted">'.htmlspecialchars($u['email'] ?? '').'</small></div><div class="btn-group"><form method="POST" action="project_task.php" class="d-inline"><input type="hidden" name="action" value="update_user_status"><input type="hidden" name="user_id" value="'.(int)$u['id'].'"><input type="hidden" name="status" value="'.($st==='active'?'inactive':'active').'"><button class="btn btn-sm '.($st==='active'?'btn-outline-danger':'btn-outline-success').'">'.($st==='active'?'Disable':'Activate').'</button></form></div></div>';
                   }
                 } catch (Throwable $e) { }
               ?>

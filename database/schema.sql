@@ -1,4 +1,3 @@
--- Database schema: tables, constraints, at sample data.
 CREATE DATABASE IF NOT EXISTS `valucare_pms`
   DEFAULT CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
@@ -6,6 +5,37 @@ USE `valucare_pms`;
 
 SET NAMES utf8mb4;
 SET time_zone = '+00:00';
+
+SET FOREIGN_KEY_CHECKS=0;
+DROP TABLE IF EXISTS
+  `activity_log`,
+  `notifications`,
+  `extension_requests`,
+  `messages`,
+  `channels`,
+  `attachments`,
+  `task_assignees`,
+  `task_time_logs`,
+  `task_comments`,
+  `task_tags`,
+  `task_dependencies`,
+  `tasks`,
+  `projects`,
+  `team_members`,
+  `teams`,
+  `user_roles`,
+  `role_permissions`,
+  `permissions`,
+  `roles`,
+  `user_notification_settings`,
+  `system_settings`,
+  `performance_records`,
+  `users`,
+  `project_statuses`,
+  `task_statuses`,
+  `tags`,
+  `organizations`,
+SET FOREIGN_KEY_CHECKS=1;
 
 CREATE TABLE IF NOT EXISTS `organizations` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -23,51 +53,26 @@ CREATE TABLE IF NOT EXISTS `users` (
   `password` VARCHAR(255) NOT NULL,
   `first_name` VARCHAR(100) NULL,
   `last_name` VARCHAR(100) NULL,
+  `role` ENUM('admin','project_manager','systemdev') NOT NULL DEFAULT 'staff',
   `department` VARCHAR(100) NULL,
   `position` VARCHAR(100) NULL,
   `phone` VARCHAR(30) NULL,
   `employee_id` VARCHAR(30) NULL UNIQUE,
   `hire_date` DATE NULL,
   `skills` TEXT NULL,
+  `permissions` JSON NULL,
   `status` ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  `presence` ENUM('online','away','busy','offline') NOT NULL DEFAULT 'offline',
   `last_login` TIMESTAMP NULL DEFAULT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted_at` TIMESTAMP NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_users_org_id` (`org_id`),
+  KEY `idx_users_role` (`role`),
   CONSTRAINT `fk_users_org` FOREIGN KEY (`org_id`) REFERENCES `organizations`(`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `roles` (
-  `id` INT NOT NULL AUTO_INCREMENT,
-  `key` VARCHAR(80) NOT NULL UNIQUE,
-  `name` VARCHAR(160) NOT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `permissions` (
-  `id` INT NOT NULL AUTO_INCREMENT,
-  `key` VARCHAR(120) NOT NULL UNIQUE,
-  `name` VARCHAR(160) NOT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `role_permissions` (
-  `role_id` INT NOT NULL,
-  `permission_id` INT NOT NULL,
-  PRIMARY KEY (`role_id`,`permission_id`),
-  CONSTRAINT `fk_role_permissions_role` FOREIGN KEY (`role_id`) REFERENCES `roles`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_role_permissions_permission` FOREIGN KEY (`permission_id`) REFERENCES `permissions`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `user_roles` (
-  `user_id` INT NOT NULL,
-  `role_id` INT NOT NULL,
-  PRIMARY KEY (`user_id`,`role_id`),
-  CONSTRAINT `fk_user_roles_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_user_roles_role` FOREIGN KEY (`role_id`) REFERENCES `roles`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `teams` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -115,7 +120,7 @@ CREATE TABLE IF NOT EXISTS `projects` (
   `progress` TINYINT UNSIGNED NOT NULL DEFAULT 0,
   `start_date` DATE NULL,
   `due_date` DATE NULL,
-  `team_lead_id` INT NULL,
+  `project_manager_id` INT NULL,
   `created_by` INT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -123,10 +128,10 @@ CREATE TABLE IF NOT EXISTS `projects` (
   PRIMARY KEY (`id`),
   KEY `idx_projects_team_id` (`team_id`),
   KEY `idx_projects_due_date` (`due_date`),
-  KEY `idx_projects_team_lead_id` (`team_lead_id`),
+  KEY `idx_projects_project_manager_id` (`project_manager_id`),
   KEY `idx_projects_status_id` (`project_status_id`),
   CONSTRAINT `fk_projects_team` FOREIGN KEY (`team_id`) REFERENCES `teams`(`id`) ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT `fk_projects_team_lead` FOREIGN KEY (`team_lead_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT `fk_projects_project_manager` FOREIGN KEY (`project_manager_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `fk_projects_created_by` FOREIGN KEY (`created_by`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `fk_projects_status` FOREIGN KEY (`project_status_id`) REFERENCES `project_statuses`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -172,6 +177,16 @@ CREATE TABLE IF NOT EXISTS `tasks` (
   CONSTRAINT `fk_tasks_assignee` FOREIGN KEY (`assignee_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `fk_tasks_status` FOREIGN KEY (`task_status_id`) REFERENCES `task_statuses`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_tasks_parent` FOREIGN KEY (`parent_task_id`) REFERENCES `tasks`(`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `task_assignees` (
+  `task_id` INT NOT NULL,
+  `user_id` INT NOT NULL,
+  `assigned_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`task_id`,`user_id`),
+  KEY `idx_task_assignees_user_id` (`user_id`),
+  CONSTRAINT `fk_task_assignees_task` FOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_task_assignees_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tags` (
@@ -323,17 +338,6 @@ CREATE TABLE IF NOT EXISTS `extension_requests` (
   CONSTRAINT `fk_extension_requests_reviewer` FOREIGN KEY (`reviewed_by`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `performance_records` (
-  `id` INT NOT NULL AUTO_INCREMENT,
-  `user_id` INT NOT NULL,
-  `period` VARCHAR(20) NOT NULL,
-  `rating` DECIMAL(4,2) NOT NULL,
-  `productivity` DECIMAL(5,2) NOT NULL,
-  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_performance_records_user_id` (`user_id`),
-  CONSTRAINT `fk_performance_records_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `activity_log` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -351,18 +355,6 @@ CREATE TABLE IF NOT EXISTS `activity_log` (
   CONSTRAINT `fk_activity_log_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `workflow_rules` (
-  `id` INT NOT NULL AUTO_INCREMENT,
-  `name` VARCHAR(160) NOT NULL,
-  `description` TEXT NULL,
-  `trigger_event` VARCHAR(120) NOT NULL,
-  `condition_text` TEXT NULL,
-  `action_text` VARCHAR(160) NOT NULL,
-  `active` TINYINT(1) NOT NULL DEFAULT 1,
-  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `user_notification_settings` (
   `user_id` INT NOT NULL,
@@ -390,13 +382,6 @@ CREATE TABLE IF NOT EXISTS `system_settings` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO `roles` (`key`,`name`) VALUES
-  ('admin','Administrator'),
-  ('team_lead','Team Lead'),
-  ('systemdev','System Developer'),
-  ('manager','Manager'),
-  ('staff','Staff')
-ON DUPLICATE KEY UPDATE `name`=VALUES(`name`);
 
 INSERT INTO `project_statuses` (`key`,`name`,`order_index`,`active`) VALUES
   ('planning','Planning',10,1),
@@ -417,11 +402,9 @@ INSERT INTO `task_statuses` (`key`,`name`,`order_index`,`active`) VALUES
   ('planned','Planned',5,1)
 ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `order_index`=VALUES(`order_index`), `active`=VALUES(`active`);
 
-INSERT INTO `users` (`username`,`email`,`password`,`first_name`,`last_name`,`department`,`position`,`phone`,`employee_id`,`hire_date`,`status`)
+INSERT INTO `users` (`username`,`email`,`password`,`first_name`,`last_name`,`role`,`department`,`position`,`phone`,`employee_id`,`hire_date`,`status`,`presence`)
 VALUES
-  ('admin','admin@example.com','$2y$10$abcdefghijklmnopqrstuv/0123456789abcdefghi','System','Administrator','ICT','admin','0000000000','ICT000','2025-01-01','active')
+  ('admin','admin@example.com','$2y$10$abcdefghijklmnopqrstuv/0123456789abcdefghi','System','Administrator','admin','ICT','admin','0000000000','ICT000','2025-01-01','active','offline')
 ON DUPLICATE KEY UPDATE `username`=`username`;
 
-INSERT INTO `user_roles` (`user_id`,`role_id`)
-SELECT u.id, r.id FROM `users` u JOIN `roles` r ON r.`key`='admin' WHERE u.`username`='admin'
-ON DUPLICATE KEY UPDATE `user_id`=`user_id`;
+-- No user_roles; admin role assigned directly on `users`
