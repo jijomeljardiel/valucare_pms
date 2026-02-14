@@ -188,7 +188,7 @@ $dashPage = $isAdmin ? 'dashboard.php' : ($isSystemDev ? 'systemdev_dashboard.ph
         <img src="<?php echo esc(base_url('assets/images/ICT.png')); ?>" alt="Logo" class="logo-image">
         <div class="logo-text">
             <h2 class="logo-title">ValueCare</h2>
-            <span class="logo-subtitle">PMS Suite</span>
+            <span class="logo-subtitle">PMS</span>
         </div>
     </div>
 

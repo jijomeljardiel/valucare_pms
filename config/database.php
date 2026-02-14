@@ -1,7 +1,7 @@
 <?php /* Database config: PDO connection sa MySQL. */
 define('DB_HOST', 'localhost');
 define('DB_PORT', 3306);
-define('DB_NAME', 'valucare_pms');
+define('DB_NAME', 'valucare_pms2');
 define('DB_USERNAME', 'root');
 define('DB_PASSWORD', '');
 
